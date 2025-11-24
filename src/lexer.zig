@@ -49,6 +49,7 @@ pub const Token = struct {
         comma,
         dot,
         colon,
+        arrow,
         string_literal,
     };
 };
@@ -83,7 +84,7 @@ pub const Lexer = struct {
             '&' => if (self.match('&')) .ampersand_ampersand else .invalid,
             '|' => if (self.match('|')) .pipe_pipe else .invalid,
             '+' => .plus,
-            '-' => .minus,
+            '-' => if (self.match('>')) .arrow else .minus,
             '*' => .star,
             '/' => .slash,
             '(' => .l_paren,
@@ -337,5 +338,12 @@ test "lexer structs" {
     try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.dot, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
+}
+
+test "lexer arrow" {
+    const source = "->";
+    var lexer = Lexer.init(source);
+    try std.testing.expectEqual(Token.Tag.arrow, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
 }
