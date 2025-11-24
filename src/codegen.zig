@@ -132,7 +132,7 @@ pub const Codegen = struct {
     }
 
     fn getExprType(self: *Codegen, expr: *Ast.Expr) !Ast.Type {
-        switch (expr.*) {
+        switch (expr.data) {
             .number => return .int,
             .boolean => return .bool,
             .string => return .string,
@@ -161,7 +161,7 @@ pub const Codegen = struct {
     }
 
     fn genStmt(self: *Codegen, stmt: Ast.Stmt) !void {
-        switch (stmt) {
+        switch (stmt.data) {
             .let => |decl| {
                 try self.genExpr(decl.value);
                 // Result is in %rax
@@ -344,7 +344,7 @@ pub const Codegen = struct {
     }
 
     fn genExpr(self: *Codegen, expr: *Ast.Expr) !void {
-        switch (expr.*) {
+        switch (expr.data) {
             .number => |val| {
                 try self.emit("  mov ${d}, %rax\n", .{val});
             },
@@ -563,11 +563,12 @@ test "codegen basic" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const dummy_loc = @import("lexer.zig").Token.Loc{ .line = 0, .col = 0, .start = 0, .end = 0 };
 
     // let x = 10;
     const val = try allocator.create(Ast.Expr);
-    val.* = Ast.Expr{ .number = 10 };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
+    val.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 10 } };
+    const stmt1 = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "x", .type = null, .value = val } } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{stmt1} };
 
@@ -584,38 +585,39 @@ test "codegen function" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const dummy_loc = @import("lexer.zig").Token.Loc{ .line = 0, .col = 0, .start = 0, .end = 0 };
 
     // fn add(a, b) { return a + b; }
     // let x = add(10, 20);
 
     // a + b
     const a_expr = try allocator.create(Ast.Expr);
-    a_expr.* = Ast.Expr{ .identifier = "a" };
+    a_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "a" } };
     const b_expr = try allocator.create(Ast.Expr);
-    b_expr.* = Ast.Expr{ .identifier = "b" };
+    b_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "b" } };
 
     const add_expr = try allocator.create(Ast.Expr);
-    add_expr.* = Ast.Expr{ .binary = .{ .left = a_expr, .op = .add, .right = b_expr } };
+    add_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .binary = .{ .left = a_expr, .op = .add, .right = b_expr } } };
 
-    const ret_stmt = Ast.Stmt{ .return_stmt = add_expr };
+    const ret_stmt = Ast.Stmt{ .loc = dummy_loc, .data = .{ .return_stmt = add_expr } };
     const body_stmt = try allocator.create(Ast.Stmt);
-    body_stmt.* = Ast.Stmt{ .block = &[_]Ast.Stmt{ret_stmt} };
+    body_stmt.* = Ast.Stmt{ .loc = dummy_loc, .data = .{ .block = &[_]Ast.Stmt{ret_stmt} } };
 
     const params = try allocator.alloc(Ast.FnParam, 2);
     params[0] = .{ .name = "a", .type = .int };
     params[1] = .{ .name = "b", .type = .int };
-    const fn_decl = Ast.Stmt{ .fn_decl = .{ .name = "add", .params = params, .return_type = .int, .body = body_stmt } };
+    const fn_decl = Ast.Stmt{ .loc = dummy_loc, .data = .{ .fn_decl = .{ .name = "add", .params = params, .return_type = .int, .body = body_stmt } } };
 
     // add(10, 20)
     const arg1 = try allocator.create(Ast.Expr);
-    arg1.* = Ast.Expr{ .number = 10 };
+    arg1.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 10 } };
     const arg2 = try allocator.create(Ast.Expr);
-    arg2.* = Ast.Expr{ .number = 20 };
+    arg2.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 20 } };
 
     const call_expr = try allocator.create(Ast.Expr);
-    call_expr.* = Ast.Expr{ .call = .{ .callee = "add", .args = &[_]*Ast.Expr{ arg1, arg2 } } };
+    call_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .call = .{ .callee = "add", .args = &[_]*Ast.Expr{ arg1, arg2 } } } };
 
-    const let_stmt = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = call_expr } };
+    const let_stmt = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "x", .type = null, .value = call_expr } } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ fn_decl, let_stmt } };
 
@@ -640,21 +642,22 @@ test "codegen unary" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const dummy_loc = @import("lexer.zig").Token.Loc{ .line = 0, .col = 0, .start = 0, .end = 0 };
 
     // let x = -10;
     // let y = !true;
 
     const ten = try allocator.create(Ast.Expr);
-    ten.* = Ast.Expr{ .number = 10 };
+    ten.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 10 } };
     const neg_ten = try allocator.create(Ast.Expr);
-    neg_ten.* = Ast.Expr{ .unary = .{ .op = .minus, .right = ten } };
-    const let_x = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = neg_ten } };
+    neg_ten.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .unary = .{ .op = .minus, .right = ten } } };
+    const let_x = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "x", .type = null, .value = neg_ten } } };
 
     const true_expr = try allocator.create(Ast.Expr);
-    true_expr.* = Ast.Expr{ .boolean = true };
+    true_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .boolean = true } };
     const not_true = try allocator.create(Ast.Expr);
-    not_true.* = Ast.Expr{ .unary = .{ .op = .bang, .right = true_expr } };
-    const let_y = Ast.Stmt{ .let = .{ .name = "y", .type = null, .value = not_true } };
+    not_true.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .unary = .{ .op = .bang, .right = true_expr } } };
+    const let_y = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "y", .type = null, .value = not_true } } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ let_x, let_y } };
 
@@ -674,45 +677,46 @@ test "codegen for loop" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const dummy_loc = @import("lexer.zig").Token.Loc{ .line = 0, .col = 0, .start = 0, .end = 0 };
 
     // for (let i = 0; i < 10; i = i + 1) { print(i); }
 
     // Init: let i = 0;
     const val_0 = try allocator.create(Ast.Expr);
-    val_0.* = Ast.Expr{ .number = 0 };
+    val_0.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 0 } };
     const init_stmt = try allocator.create(Ast.Stmt);
-    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .type = null, .value = val_0 } };
+    init_stmt.* = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "i", .type = null, .value = val_0 } } };
 
     // Cond: i < 10
     const ref_i = try allocator.create(Ast.Expr);
-    ref_i.* = Ast.Expr{ .identifier = "i" };
+    ref_i.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "i" } };
     const val_10 = try allocator.create(Ast.Expr);
-    val_10.* = Ast.Expr{ .number = 10 };
+    val_10.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 10 } };
     const cond_expr = try allocator.create(Ast.Expr);
-    cond_expr.* = Ast.Expr{ .binary = .{ .left = ref_i, .op = .less, .right = val_10 } };
+    cond_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .binary = .{ .left = ref_i, .op = .less, .right = val_10 } } };
 
     // Incr: i = i + 1
     const ref_i_2 = try allocator.create(Ast.Expr);
-    ref_i_2.* = Ast.Expr{ .identifier = "i" };
+    ref_i_2.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "i" } };
     const val_1 = try allocator.create(Ast.Expr);
-    val_1.* = Ast.Expr{ .number = 1 };
+    val_1.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 1 } };
     const add_expr = try allocator.create(Ast.Expr);
-    add_expr.* = Ast.Expr{ .binary = .{ .left = ref_i_2, .op = .add, .right = val_1 } };
+    add_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .binary = .{ .left = ref_i_2, .op = .add, .right = val_1 } } };
     const incr_stmt = try allocator.create(Ast.Stmt);
-    incr_stmt.* = Ast.Stmt{ .assign = .{ .name = "i", .value = add_expr } };
+    incr_stmt.* = Ast.Stmt{ .loc = dummy_loc, .data = .{ .assign = .{ .name = "i", .value = add_expr } } };
 
     // Body: print(i)
     const ref_i_3 = try allocator.create(Ast.Expr);
-    ref_i_3.* = Ast.Expr{ .identifier = "i" };
+    ref_i_3.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "i" } };
     const body_stmt = try allocator.create(Ast.Stmt);
-    body_stmt.* = Ast.Stmt{ .print = ref_i_3 };
+    body_stmt.* = Ast.Stmt{ .loc = dummy_loc, .data = .{ .print = ref_i_3 } };
 
-    const for_stmt = Ast.Stmt{ .for_stmt = .{
+    const for_stmt = Ast.Stmt{ .loc = dummy_loc, .data = .{ .for_stmt = .{
         .init = init_stmt,
         .condition = cond_expr,
         .increment = incr_stmt,
         .body = body_stmt,
-    } };
+    } } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{for_stmt} };
 
@@ -740,40 +744,41 @@ test "codegen arrays" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const dummy_loc = @import("lexer.zig").Token.Loc{ .line = 0, .col = 0, .start = 0, .end = 0 };
 
     // let arr = [1, 2, 3];
     const one = try allocator.create(Ast.Expr);
-    one.* = Ast.Expr{ .number = 1 };
+    one.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 1 } };
     const two = try allocator.create(Ast.Expr);
-    two.* = Ast.Expr{ .number = 2 };
+    two.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 2 } };
     const three = try allocator.create(Ast.Expr);
-    three.* = Ast.Expr{ .number = 3 };
+    three.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 3 } };
 
     const array_lit = try allocator.create(Ast.Expr);
-    array_lit.* = Ast.Expr{ .array_literal = &[_]*Ast.Expr{ one, two, three } };
+    array_lit.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .array_literal = &[_]*Ast.Expr{ one, two, three } } };
 
-    const let_arr = Ast.Stmt{ .let = .{ .name = "arr", .type = null, .value = array_lit } };
+    const let_arr = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "arr", .type = null, .value = array_lit } } };
 
     // let x = arr[1];
     const arr_ref = try allocator.create(Ast.Expr);
-    arr_ref.* = Ast.Expr{ .identifier = "arr" };
+    arr_ref.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "arr" } };
     const idx_1 = try allocator.create(Ast.Expr);
-    idx_1.* = Ast.Expr{ .number = 1 };
+    idx_1.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 1 } };
 
     const index_expr = try allocator.create(Ast.Expr);
-    index_expr.* = Ast.Expr{ .index = .{ .callee = arr_ref, .index = idx_1 } };
+    index_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .index = .{ .callee = arr_ref, .index = idx_1 } } };
 
-    const let_x = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = index_expr } };
+    const let_x = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "x", .type = null, .value = index_expr } } };
 
     // arr[2] = 42;
     const arr_ref_2 = try allocator.create(Ast.Expr);
-    arr_ref_2.* = Ast.Expr{ .identifier = "arr" };
+    arr_ref_2.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "arr" } };
     const idx_2 = try allocator.create(Ast.Expr);
-    idx_2.* = Ast.Expr{ .number = 2 };
+    idx_2.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 2 } };
     const val_42 = try allocator.create(Ast.Expr);
-    val_42.* = Ast.Expr{ .number = 42 };
+    val_42.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 42 } };
 
-    const assign_stmt = Ast.Stmt{ .array_assign = .{ .name = "arr", .index = idx_2, .value = val_42 } };
+    const assign_stmt = Ast.Stmt{ .loc = dummy_loc, .data = .{ .array_assign = .{ .name = "arr", .index = idx_2, .value = val_42 } } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ let_arr, let_x, assign_stmt } };
 
@@ -804,31 +809,32 @@ test "codegen structs" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const dummy_loc = @import("lexer.zig").Token.Loc{ .line = 0, .col = 0, .start = 0, .end = 0 };
 
     // struct Point { x, y }
     const fields = try allocator.alloc(Ast.StructField, 2);
     fields[0] = .{ .name = "x", .type = .int };
     fields[1] = .{ .name = "y", .type = .int };
-    const stmt1 = Ast.Stmt{ .struct_decl = .{ .name = "Point", .fields = fields } };
+    const stmt1 = Ast.Stmt{ .loc = dummy_loc, .data = .{ .struct_decl = .{ .name = "Point", .fields = fields } } };
 
     // let p = Point { x: 1, y: 2 };
     const one = try allocator.create(Ast.Expr);
-    one.* = Ast.Expr{ .number = 1 };
+    one.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 1 } };
     const two = try allocator.create(Ast.Expr);
-    two.* = Ast.Expr{ .number = 2 };
+    two.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .number = 2 } };
     const struct_fields = try allocator.alloc(Ast.StructFieldInit, 2);
     struct_fields[0] = .{ .name = "x", .value = one };
     struct_fields[1] = .{ .name = "y", .value = two };
     const struct_lit = try allocator.create(Ast.Expr);
-    struct_lit.* = Ast.Expr{ .struct_literal = .{ .struct_name = "Point", .fields = struct_fields } };
-    const stmt2 = Ast.Stmt{ .let = .{ .name = "p", .type = null, .value = struct_lit } };
+    struct_lit.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .struct_literal = .{ .struct_name = "Point", .fields = struct_fields } } };
+    const stmt2 = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "p", .type = null, .value = struct_lit } } };
 
     // let val = p.y;
     const ref_p = try allocator.create(Ast.Expr);
-    ref_p.* = Ast.Expr{ .identifier = "p" };
+    ref_p.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .identifier = "p" } };
     const field_access = try allocator.create(Ast.Expr);
-    field_access.* = Ast.Expr{ .field_access = .{ .object = ref_p, .field = "y" } };
-    const stmt3 = Ast.Stmt{ .let = .{ .name = "val", .type = null, .value = field_access } };
+    field_access.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .field_access = .{ .object = ref_p, .field = "y" } } };
+    const stmt3 = Ast.Stmt{ .loc = dummy_loc, .data = .{ .let = .{ .name = "val", .type = null, .value = field_access } } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2, stmt3 } };
 

@@ -4,6 +4,7 @@ const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
 const Sema = @import("sema.zig").Sema;
 const Codegen = @import("codegen.zig").Codegen;
+const Diagnostics = @import("diagnostics.zig").Diagnostics;
 
 const runtime_c =
     \\#include <stdio.h>
@@ -34,6 +35,11 @@ pub fn main() !void {
     }
 
     const file_path = args[1];
+    if (!std.mem.endsWith(u8, file_path, ".mini")) {
+        std.debug.print("Error: Source file must have .mini extension\n", .{});
+        return;
+    }
+
     const source = try std.fs.cwd().readFileAlloc(allocator, file_path, 1024 * 1024);
 
     // Parse
@@ -43,13 +49,22 @@ pub fn main() !void {
         return;
     };
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+    // defer diagnostics.deinit(); // Arena handles it
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     // defer sema.deinit(); // Arena handles it
     sema.analyze(program) catch |err| {
         std.debug.print("Semantic error: {}\n", .{err});
         return;
     };
+
+    if (diagnostics.hasErrors()) {
+        diagnostics.report(source);
+        return;
+    }
 
     // Codegen
     var codegen = try Codegen.init(allocator);
@@ -148,8 +163,11 @@ test "integration control flow" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen
@@ -235,8 +253,11 @@ test "integration functions" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen
@@ -311,8 +332,11 @@ test "integration strings" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen
@@ -396,8 +420,11 @@ test "integration booleans" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen
@@ -476,8 +503,11 @@ test "integration unary" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen
@@ -555,8 +585,11 @@ test "integration for loop" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen
@@ -640,8 +673,11 @@ test "integration arrays" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen
@@ -720,8 +756,11 @@ test "integration structs" {
     var parser = Parser.init(allocator, source);
     const program = try parser.parse();
 
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
     // Sema
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     try sema.analyze(program);
 
     // Codegen

@@ -22,21 +22,23 @@ A simple compiler for a custom programming language ("Mini") written in Zig. Thi
   - Function calls with arguments.
   - `return` statements.
 - **I/O**: Built-in `print()` function.
+- **Error Reporting**: Rich diagnostics with source location, underlining, and hints.
 
 ## Architecture
 
-The compiler is structured into four main phases:
+The compiler is structured into five main components:
 
 1.  **Lexer (`src/lexer.zig`)**: Tokenizes the source code into a stream of tokens (keywords, identifiers, literals, operators).
 2.  **Parser (`src/parser.zig`)**: Consumes tokens to build an Abstract Syntax Tree (AST) representing the program structure. Implements operator precedence.
 3.  **Semantic Analysis (`src/sema.zig`)**: Traverses the AST to check for errors (undefined variables, type mismatches, scope resolution).
 4.  **Code Generation (`src/codegen.zig`)**: Traverses the AST to generate x86-64 assembly code (AT&T syntax).
+5.  **Diagnostics (`src/diagnostics.zig`)**: Handles error reporting with colored output and source context.
 
 ## Building and Running
 
 ### Prerequisites
 
-- [Zig Compiler](https://ziglang.org/download/) (tested with 0.13.0+)
+- [Zig Compiler](https://ziglang.org/download/) (tested with 0.15.0+)
 - A C compiler (like `clang` or `gcc`) for linking the runtime.
 
 ### Build
@@ -51,7 +53,7 @@ The executable will be located at `zig-out/bin/minic`.
 
 ### Run a Program
 
-To compile and run a Mini program:
+To compile and run a Mini program (must have `.mini` extension):
 
 ```bash
 zig build run -- test.mini
@@ -137,6 +139,24 @@ print(result);
 ```mini
 let y = -10;
 let not_valid = !true;
+```
+
+### Error Reporting
+
+The compiler provides helpful error messages with context:
+
+```
+error: Type mismatch in variable declaration. Expected .{ .int = void }, found .{ .string = void }
+  --> 1:1
+   |
+   1 | let x: int = "hello";
+   | ^^^
+
+error: undefined variable 'z'
+  --> 3:7
+   |
+   3 | print(z);
+   |       ^
 ```
 
 ## Implementation Details

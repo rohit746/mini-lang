@@ -1,4 +1,5 @@
 const std = @import("std");
+const Token = @import("lexer.zig").Token;
 
 pub const BinaryOp = enum {
     add,
@@ -20,7 +21,12 @@ pub const UnaryOp = enum {
     minus,
 };
 
-pub const Expr = union(enum) {
+pub const Expr = struct {
+    loc: Token.Loc,
+    data: ExprData,
+};
+
+pub const ExprData = union(enum) {
     number: i64,
     boolean: bool,
     string: []const u8,
@@ -77,7 +83,12 @@ pub const FnParam = struct {
     type: Type,
 };
 
-pub const Stmt = union(enum) {
+pub const Stmt = struct {
+    loc: Token.Loc,
+    data: StmtData,
+};
+
+pub const StmtData = union(enum) {
     let: struct {
         name: []const u8,
         type: ?Type,
@@ -126,10 +137,6 @@ pub const Program = struct {
     statements: []const Stmt,
 
     pub fn deinit(self: *Program, allocator: std.mem.Allocator) void {
-        // In a real compiler, we'd likely use an ArenaAllocator for the whole AST
-        // so we wouldn't need manual deinit for every node.
-        // For this simple example, we'll assume the caller handles memory
-        // or we use an Arena.
         _ = self;
         _ = allocator;
     }

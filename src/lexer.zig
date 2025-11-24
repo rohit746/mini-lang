@@ -7,6 +7,8 @@ pub const Token = struct {
     pub const Loc = struct {
         start: usize,
         end: usize,
+        line: usize,
+        col: usize,
     };
 
     pub const Tag = enum {
@@ -57,11 +59,15 @@ pub const Token = struct {
 pub const Lexer = struct {
     source: []const u8,
     index: usize,
+    line: usize,
+    col: usize,
 
     pub fn init(source: []const u8) Lexer {
         return .{
             .source = source,
             .index = 0,
+            .line = 1,
+            .col = 1,
         };
     }
 
@@ -69,12 +75,15 @@ pub const Lexer = struct {
         self.skipWhitespace();
 
         const start = self.index;
+        const start_line = self.line;
+        const start_col = self.col;
+
         if (self.index >= self.source.len) {
-            return .{ .tag = .eof, .loc = .{ .start = start, .end = start } };
+            return .{ .tag = .eof, .loc = .{ .start = start, .end = start, .line = start_line, .col = start_col } };
         }
 
         const c = self.source[self.index];
-        self.index += 1;
+        self.advanceChar();
 
         const tag: Token.Tag = switch (c) {
             '=' => if (self.match('=')) .equal_equal else .equal,
@@ -98,54 +107,69 @@ pub const Lexer = struct {
             '.' => .dot,
             ':' => .colon,
             '"' => {
-                self.index += 1; // Skip opening quote
+                // Opening quote already consumed by advanceChar
                 while (self.index < self.source.len and self.source[self.index] != '"') {
                     if (self.source[self.index] == '\\' and self.index + 1 < self.source.len) {
-                        self.index += 2; // Skip escaped char
+                        self.advanceChar(); // backslash
+                        self.advanceChar(); // escaped char
                     } else {
-                        self.index += 1;
+                        self.advanceChar();
                     }
                 }
-                if (self.index >= self.source.len) return .{ .tag = .invalid, .loc = .{ .start = start, .end = self.index } }; // Unterminated string
-                self.index += 1; // Skip closing quote
-                return .{ .tag = .string_literal, .loc = .{ .start = start, .end = self.index } };
+                if (self.index >= self.source.len) return .{ .tag = .invalid, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } }; // Unterminated string
+                self.advanceChar(); // Closing quote
+                return .{ .tag = .string_literal, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
             },
             '0'...'9' => {
-                while (self.index < self.source.len) : (self.index += 1) {
+                while (self.index < self.source.len) {
                     const digit = self.source[self.index];
                     if (!std.ascii.isDigit(digit)) break;
+                    self.advanceChar();
                 }
-                return .{ .tag = .number_literal, .loc = .{ .start = start, .end = self.index } };
+                return .{ .tag = .number_literal, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
             },
             'a'...'z', 'A'...'Z', '_' => {
-                while (self.index < self.source.len) : (self.index += 1) {
+                while (self.index < self.source.len) {
                     const char = self.source[self.index];
                     if (!std.ascii.isAlphanumeric(char) and char != '_') break;
+                    self.advanceChar();
                 }
                 const ident = self.source[start..self.index];
-                if (std.mem.eql(u8, ident, "let")) return .{ .tag = .keyword_let, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "print")) return .{ .tag = .keyword_print, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "if")) return .{ .tag = .keyword_if, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "else")) return .{ .tag = .keyword_else, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "while")) return .{ .tag = .keyword_while, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "for")) return .{ .tag = .keyword_for, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "fn")) return .{ .tag = .keyword_fn, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "return")) return .{ .tag = .keyword_return, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "struct")) return .{ .tag = .keyword_struct, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "true")) return .{ .tag = .keyword_true, .loc = .{ .start = start, .end = self.index } };
-                if (std.mem.eql(u8, ident, "false")) return .{ .tag = .keyword_false, .loc = .{ .start = start, .end = self.index } };
-                return .{ .tag = .identifier, .loc = .{ .start = start, .end = self.index } };
+                if (std.mem.eql(u8, ident, "let")) return .{ .tag = .keyword_let, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "print")) return .{ .tag = .keyword_print, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "if")) return .{ .tag = .keyword_if, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "else")) return .{ .tag = .keyword_else, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "while")) return .{ .tag = .keyword_while, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "for")) return .{ .tag = .keyword_for, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "fn")) return .{ .tag = .keyword_fn, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "return")) return .{ .tag = .keyword_return, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "struct")) return .{ .tag = .keyword_struct, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "true")) return .{ .tag = .keyword_true, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "false")) return .{ .tag = .keyword_false, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                return .{ .tag = .identifier, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
             },
             else => .invalid,
         };
 
-        return .{ .tag = tag, .loc = .{ .start = start, .end = self.index } };
+        return .{ .tag = tag, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+    }
+
+    fn advanceChar(self: *Lexer) void {
+        if (self.index < self.source.len) {
+            if (self.source[self.index] == '\n') {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+            self.index += 1;
+        }
     }
 
     fn match(self: *Lexer, expected: u8) bool {
         if (self.index >= self.source.len) return false;
         if (self.source[self.index] != expected) return false;
-        self.index += 1;
+        self.advanceChar();
         return true;
     }
 
@@ -153,12 +177,13 @@ pub const Lexer = struct {
         while (self.index < self.source.len) {
             const c = self.source[self.index];
             switch (c) {
-                ' ', '\t', '\n', '\r' => self.index += 1,
+                ' ', '\t', '\r' => self.advanceChar(),
+                '\n' => self.advanceChar(),
                 '/' => {
                     if (self.index + 1 < self.source.len and self.source[self.index + 1] == '/') {
                         // Comment: skip until newline
                         while (self.index < self.source.len and self.source[self.index] != '\n') {
-                            self.index += 1;
+                            self.advanceChar();
                         }
                     } else {
                         return;

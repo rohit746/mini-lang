@@ -1,5 +1,7 @@
 const std = @import("std");
 const Ast = @import("ast.zig");
+const Diagnostics = @import("diagnostics.zig").Diagnostics;
+const Token = @import("lexer.zig").Token;
 
 const SymbolInfo = struct {
     type: Ast.Type,
@@ -45,8 +47,9 @@ pub const Sema = struct {
     current_scope: *Scope,
     structs: std.StringHashMap(StructDef),
     current_return_type: ?Ast.Type,
+    diagnostics: *Diagnostics,
 
-    pub fn init(allocator: std.mem.Allocator) !Sema {
+    pub fn init(allocator: std.mem.Allocator, diagnostics: *Diagnostics) !Sema {
         const root = try allocator.create(Scope);
         root.* = Scope.init(allocator, null);
         return .{
@@ -54,6 +57,7 @@ pub const Sema = struct {
             .current_scope = root,
             .structs = std.StringHashMap(StructDef).init(allocator),
             .current_return_type = null,
+            .diagnostics = diagnostics,
         };
     }
 
@@ -68,7 +72,6 @@ pub const Sema = struct {
         var it = self.structs.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.fields.deinit();
-            // field_order is allocated in AST or arena, so we don't free it here if we assume arena
         }
         self.structs.deinit();
     }
@@ -103,17 +106,20 @@ pub const Sema = struct {
 
     pub fn analyze(self: *Sema, program: Ast.Program) !void {
         for (program.statements) |stmt| {
-            try self.analyzeStmt(stmt);
+            self.analyzeStmt(stmt) catch |err| {
+                if (err != error.SemanticError) return err;
+            };
         }
     }
 
     fn analyzeStmt(self: *Sema, stmt: Ast.Stmt) !void {
-        switch (stmt) {
+        switch (stmt.data) {
             .let => |decl| {
                 const type_info = try self.analyzeExpr(decl.value);
                 if (decl.type) |explicit_type| {
                     if (!self.typesEqual(explicit_type, type_info)) {
-                        return error.TypeMismatch;
+                        try self.diagnostics.addError(stmt.loc, "Type mismatch in variable declaration. Expected {}, found {}", .{ explicit_type, type_info });
+                        return error.SemanticError;
                     }
                 }
                 try self.current_scope.put(decl.name, type_info);
@@ -122,22 +128,34 @@ pub const Sema = struct {
                 const type_info = try self.analyzeExpr(assign.value);
                 if (self.current_scope.get(assign.name)) |info| {
                     if (!self.typesEqual(info.type, type_info)) {
-                        return error.TypeMismatch;
+                        try self.diagnostics.addError(stmt.loc, "Type mismatch in assignment. Expected {}, found {}", .{ info.type, type_info });
+                        return error.SemanticError;
                     }
                 } else {
-                    return error.UndefinedVariable;
+                    try self.reportUndefinedVariable(assign.name, stmt.loc);
+                    return error.SemanticError;
                 }
             },
             .array_assign => |aa| {
                 const index_type = try self.analyzeExpr(aa.index);
-                if (!self.typesEqual(index_type, .int)) return error.TypeMismatch;
+                if (!self.typesEqual(index_type, .int)) {
+                    try self.diagnostics.addError(aa.index.loc, "Array index must be an integer", .{});
+                    return error.SemanticError;
+                }
                 const value_type = try self.analyzeExpr(aa.value);
-                if (!self.typesEqual(value_type, .int)) return error.TypeMismatch;
+                if (!self.typesEqual(value_type, .int)) {
+                    try self.diagnostics.addError(aa.value.loc, "Array elements must be integers", .{});
+                    return error.SemanticError;
+                }
 
                 if (self.current_scope.get(aa.name)) |info| {
-                    if (!self.typesEqual(info.type, .array_int)) return error.TypeMismatch;
+                    if (!self.typesEqual(info.type, .array_int)) {
+                        try self.diagnostics.addError(stmt.loc, "Variable '{s}' is not an array", .{aa.name});
+                        return error.SemanticError;
+                    }
                 } else {
-                    return error.UndefinedVariable;
+                    try self.reportUndefinedVariable(aa.name, stmt.loc);
+                    return error.SemanticError;
                 }
             },
             .struct_decl => |s| {
@@ -155,13 +173,18 @@ pub const Sema = struct {
             .block => |stmts| {
                 try self.enterScope();
                 for (stmts) |s| {
-                    try self.analyzeStmt(s);
+                    self.analyzeStmt(s) catch |err| {
+                        if (err != error.SemanticError) return err;
+                    };
                 }
                 self.leaveScope();
             },
             .if_stmt => |if_s| {
                 const cond_type = try self.analyzeExpr(if_s.condition);
-                if (!self.typesEqual(cond_type, .bool)) return error.TypeMismatch;
+                if (!self.typesEqual(cond_type, .bool)) {
+                    try self.diagnostics.addError(if_s.condition.loc, "If condition must be a boolean", .{});
+                    return error.SemanticError;
+                }
                 try self.analyzeStmt(if_s.then_branch.*);
                 if (if_s.else_branch) |else_branch| {
                     try self.analyzeStmt(else_branch.*);
@@ -169,42 +192,39 @@ pub const Sema = struct {
             },
             .while_stmt => |while_s| {
                 const cond_type = try self.analyzeExpr(while_s.condition);
-                if (!self.typesEqual(cond_type, .bool)) return error.TypeMismatch;
+                if (!self.typesEqual(cond_type, .bool)) {
+                    try self.diagnostics.addError(while_s.condition.loc, "While condition must be a boolean", .{});
+                    return error.SemanticError;
+                }
                 try self.analyzeStmt(while_s.body.*);
             },
             .fn_decl => |func| {
-                // Register function name in current scope
                 try self.current_scope.put(func.name, .void);
-
-                // Enter new scope for function body
                 try self.enterScope();
-
-                // Add parameters to scope
                 for (func.params) |param| {
                     try self.current_scope.put(param.name, param.type);
                 }
-
-                // Set expected return type
                 const prev_return_type = self.current_return_type;
                 self.current_return_type = func.return_type;
-
-                // Analyze body
                 try self.analyzeStmt(func.body.*);
-
-                // Restore return type
                 self.current_return_type = prev_return_type;
-
                 self.leaveScope();
             },
             .return_stmt => |ret| {
                 if (ret) |expr| {
                     const type_info = try self.analyzeExpr(expr);
                     if (self.current_return_type) |expected| {
-                        if (!self.typesEqual(expected, type_info)) return error.TypeMismatch;
+                        if (!self.typesEqual(expected, type_info)) {
+                            try self.diagnostics.addError(stmt.loc, "Invalid return type. Expected {}, found {}", .{ expected, type_info });
+                            return error.SemanticError;
+                        }
                     }
                 } else {
                     if (self.current_return_type) |expected| {
-                        if (expected != .void) return error.TypeMismatch;
+                        if (expected != .void) {
+                            try self.diagnostics.addError(stmt.loc, "Expected return value of type {}", .{expected});
+                            return error.SemanticError;
+                        }
                     }
                 }
             },
@@ -215,7 +235,10 @@ pub const Sema = struct {
                 }
                 if (for_s.condition) |cond| {
                     const cond_type = try self.analyzeExpr(cond);
-                    if (!self.typesEqual(cond_type, .bool)) return error.TypeMismatch;
+                    if (!self.typesEqual(cond_type, .bool)) {
+                        try self.diagnostics.addError(cond.loc, "For condition must be a boolean", .{});
+                        return error.SemanticError;
+                    }
                 }
                 if (for_s.increment) |incr| {
                     try self.analyzeStmt(incr.*);
@@ -227,7 +250,7 @@ pub const Sema = struct {
     }
 
     fn analyzeExpr(self: *Sema, expr: *Ast.Expr) !Ast.Type {
-        switch (expr.*) {
+        switch (expr.data) {
             .number => return .int,
             .boolean => return .bool,
             .string => return .string,
@@ -235,7 +258,8 @@ pub const Sema = struct {
                 if (self.current_scope.get(name)) |info| {
                     return info.type;
                 } else {
-                    return error.UndefinedVariable;
+                    try self.reportUndefinedVariable(name, expr.loc);
+                    return error.SemanticError;
                 }
             },
             .binary => |bin| {
@@ -244,19 +268,31 @@ pub const Sema = struct {
 
                 switch (bin.op) {
                     .add, .sub, .mul, .div => {
-                        if (!self.typesEqual(left, .int) or !self.typesEqual(right, .int)) return error.TypeMismatch;
+                        if (!self.typesEqual(left, .int) or !self.typesEqual(right, .int)) {
+                            try self.diagnostics.addError(expr.loc, "Operands must be integers", .{});
+                            return error.SemanticError;
+                        }
                         return .int;
                     },
                     .equal_equal, .bang_equal => {
-                        if (!self.typesEqual(left, right)) return error.TypeMismatch;
+                        if (!self.typesEqual(left, right)) {
+                            try self.diagnostics.addError(expr.loc, "Operands must be of the same type", .{});
+                            return error.SemanticError;
+                        }
                         return .bool;
                     },
                     .less, .less_equal, .greater, .greater_equal => {
-                        if (!self.typesEqual(left, .int) or !self.typesEqual(right, .int)) return error.TypeMismatch;
+                        if (!self.typesEqual(left, .int) or !self.typesEqual(right, .int)) {
+                            try self.diagnostics.addError(expr.loc, "Operands must be integers", .{});
+                            return error.SemanticError;
+                        }
                         return .bool;
                     },
                     .logic_and, .logic_or => {
-                        if (!self.typesEqual(left, .bool) or !self.typesEqual(right, .bool)) return error.TypeMismatch;
+                        if (!self.typesEqual(left, .bool) or !self.typesEqual(right, .bool)) {
+                            try self.diagnostics.addError(expr.loc, "Operands must be booleans", .{});
+                            return error.SemanticError;
+                        }
                         return .bool;
                     },
                 }
@@ -265,46 +301,69 @@ pub const Sema = struct {
                 const right = try self.analyzeExpr(un.right);
                 switch (un.op) {
                     .bang => {
-                        if (!self.typesEqual(right, .bool)) return error.TypeMismatch;
+                        if (!self.typesEqual(right, .bool)) {
+                            try self.diagnostics.addError(expr.loc, "Operand must be boolean", .{});
+                            return error.SemanticError;
+                        }
                         return .bool;
                     },
                     .minus => {
-                        if (!self.typesEqual(right, .int)) return error.TypeMismatch;
+                        if (!self.typesEqual(right, .int)) {
+                            try self.diagnostics.addError(expr.loc, "Operand must be integer", .{});
+                            return error.SemanticError;
+                        }
                         return .int;
                     },
                 }
             },
             .call => |call| {
                 if (!self.current_scope.contains(call.callee)) {
-                    return error.UndefinedFunction;
+                    try self.reportUndefinedVariable(call.callee, expr.loc);
+                    return error.SemanticError;
                 }
                 for (call.args) |arg| {
                     _ = try self.analyzeExpr(arg);
                 }
-                // Assume functions return int
                 return .int;
             },
             .array_literal => |elements| {
                 for (elements) |elem| {
                     const t = try self.analyzeExpr(elem);
-                    if (!self.typesEqual(t, .int)) return error.TypeMismatch;
+                    if (!self.typesEqual(t, .int)) {
+                        try self.diagnostics.addError(elem.loc, "Array elements must be integers", .{});
+                        return error.SemanticError;
+                    }
                 }
                 return .array_int;
             },
             .index => |idx| {
                 const callee_type = try self.analyzeExpr(idx.callee);
-                if (!self.typesEqual(callee_type, .array_int)) return error.TypeMismatch;
+                if (!self.typesEqual(callee_type, .array_int)) {
+                    try self.diagnostics.addError(idx.callee.loc, "Expected array type", .{});
+                    return error.SemanticError;
+                }
                 const index_type = try self.analyzeExpr(idx.index);
-                if (!self.typesEqual(index_type, .int)) return error.TypeMismatch;
+                if (!self.typesEqual(index_type, .int)) {
+                    try self.diagnostics.addError(idx.index.loc, "Index must be an integer", .{});
+                    return error.SemanticError;
+                }
                 return .int;
             },
             .struct_literal => |sl| {
-                const def = self.structs.get(sl.struct_name) orelse return error.UndefinedVariable; // UndefinedType
-                // Check fields
+                const def = self.structs.get(sl.struct_name) orelse {
+                    try self.diagnostics.addError(expr.loc, "Undefined struct '{s}'", .{sl.struct_name});
+                    return error.SemanticError;
+                };
                 for (sl.fields) |field| {
-                    const field_type = def.fields.get(field.name) orelse return error.UndefinedVariable; // UndefinedField
+                    const field_type = def.fields.get(field.name) orelse {
+                        try self.diagnostics.addError(expr.loc, "Struct '{s}' has no field '{s}'", .{ sl.struct_name, field.name });
+                        return error.SemanticError;
+                    };
                     const expr_type = try self.analyzeExpr(field.value);
-                    if (!self.typesEqual(expr_type, field_type)) return error.TypeMismatch;
+                    if (!self.typesEqual(expr_type, field_type)) {
+                        try self.diagnostics.addError(field.value.loc, "Type mismatch for field '{s}'", .{field.name});
+                        return error.SemanticError;
+                    }
                 }
                 return Ast.Type{ .struct_type = sl.struct_name };
             },
@@ -312,14 +371,76 @@ pub const Sema = struct {
                 const obj_type = try self.analyzeExpr(fa.object);
                 switch (obj_type) {
                     .struct_type => |name| {
-                        const def = self.structs.get(name) orelse return error.UndefinedVariable; // Should not happen if type exists
-                        const field_type = def.fields.get(fa.field) orelse return error.UndefinedVariable; // UndefinedField
+                        const def = self.structs.get(name) orelse {
+                            // Should not happen if type exists
+                            return error.SemanticError;
+                        };
+                        const field_type = def.fields.get(fa.field) orelse {
+                            try self.diagnostics.addError(expr.loc, "Struct '{s}' has no field '{s}'", .{ name, fa.field });
+                            return error.SemanticError;
+                        };
                         return field_type;
                     },
-                    else => return error.TypeMismatch,
+                    else => {
+                        try self.diagnostics.addError(fa.object.loc, "Expected struct type", .{});
+                        return error.SemanticError;
+                    },
                 }
             },
         }
+    }
+
+    fn reportUndefinedVariable(self: *Sema, name: []const u8, loc: Token.Loc) !void {
+        if (self.findClosestMatch(name)) |match| {
+            try self.diagnostics.addErrorWithHint(loc, match, "undefined variable '{s}'", .{name});
+        } else {
+            try self.diagnostics.addError(loc, "undefined variable '{s}'", .{name});
+        }
+    }
+
+    fn findClosestMatch(self: *Sema, name: []const u8) ?[]const u8 {
+        var min_dist: usize = std.math.maxInt(usize);
+        var best_match: ?[]const u8 = null;
+
+        var scope: ?*Scope = self.current_scope;
+        while (scope) |s| {
+            var it = s.symbols.keyIterator();
+            while (it.next()) |key| {
+                const dist = levenshtein(name, key.*);
+                if (dist < min_dist) {
+                    min_dist = dist;
+                    best_match = key.*;
+                }
+            }
+            scope = s.parent;
+        }
+
+        if (min_dist <= 3 and min_dist < name.len) return best_match;
+        return null;
+    }
+
+    fn levenshtein(a: []const u8, b: []const u8) usize {
+        if (a.len == 0) return b.len;
+        if (b.len == 0) return a.len;
+
+        const allocator = std.heap.page_allocator; // Use page allocator for temp buffers
+        const v0 = allocator.alloc(usize, b.len + 1) catch return std.math.maxInt(usize);
+        defer allocator.free(v0);
+        const v1 = allocator.alloc(usize, b.len + 1) catch return std.math.maxInt(usize);
+        defer allocator.free(v1);
+
+        for (v0, 0..) |*item, i| item.* = i;
+
+        for (a, 0..) |char_a, i| {
+            v1[0] = i + 1;
+            for (b, 0..) |char_b, j| {
+                const cost: usize = if (char_a == char_b) 0 else 1;
+                v1[j + 1] = @min(v1[j] + 1, @min(v0[j + 1] + 1, v0[j] + cost));
+            }
+            @memcpy(v0, v1);
+        }
+
+        return v0[b.len];
     }
 };
 
@@ -333,250 +454,52 @@ pub const ParseError = error{
     UndefinedFunction,
     TypeMismatch,
     UndefinedVariable,
+    SemanticError,
 };
 
 test "sema basic" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
 
     // let x = 10;
     const val = try allocator.create(Ast.Expr);
-    val.* = Ast.Expr{ .number = 10 };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
+    val.* = Ast.Expr{ .loc = undefined, .data = .{ .number = 10 } };
+    const stmt1 = Ast.Stmt{ .loc = undefined, .data = .{ .let = .{ .name = "x", .type = null, .value = val } } };
 
     // print(x);
     const ref = try allocator.create(Ast.Expr);
-    ref.* = Ast.Expr{ .identifier = "x" };
-    const stmt2 = Ast.Stmt{ .print = ref };
+    ref.* = Ast.Expr{ .loc = undefined, .data = .{ .identifier = "x" } };
+    const stmt2 = Ast.Stmt{ .loc = undefined, .data = .{ .print = ref } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2 } };
 
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     defer sema.deinit();
 
     try sema.analyze(program);
+    try std.testing.expect(!diagnostics.hasErrors());
 }
 
 test "sema undefined variable" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
 
     // print(y);
     const ref = try allocator.create(Ast.Expr);
-    ref.* = Ast.Expr{ .identifier = "y" };
-    const stmt = Ast.Stmt{ .print = ref };
+    ref.* = Ast.Expr{ .loc = undefined, .data = .{ .identifier = "y" } };
+    const stmt = Ast.Stmt{ .loc = undefined, .data = .{ .print = ref } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{stmt} };
 
-    var sema = try Sema.init(allocator);
-    defer sema.deinit();
-
-    try std.testing.expectError(error.UndefinedVariable, sema.analyze(program));
-}
-
-test "sema scopes" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    // let x = 10;
-    const val = try allocator.create(Ast.Expr);
-    val.* = Ast.Expr{ .number = 10 };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
-
-    // { let y = 20; print(x); print(y); }
-    const val2 = try allocator.create(Ast.Expr);
-    val2.* = Ast.Expr{ .number = 20 };
-    const stmt_inner_let = Ast.Stmt{ .let = .{ .name = "y", .type = null, .value = val2 } };
-
-    const ref_x = try allocator.create(Ast.Expr);
-    ref_x.* = Ast.Expr{ .identifier = "x" };
-    const stmt_print_x = Ast.Stmt{ .print = ref_x };
-
-    const ref_y = try allocator.create(Ast.Expr);
-    ref_y.* = Ast.Expr{ .identifier = "y" };
-    const stmt_print_y = Ast.Stmt{ .print = ref_y };
-
-    const block_stmts = try allocator.alloc(Ast.Stmt, 3);
-    block_stmts[0] = stmt_inner_let;
-    block_stmts[1] = stmt_print_x;
-    block_stmts[2] = stmt_print_y;
-    const stmt_block = Ast.Stmt{ .block = block_stmts };
-
-    // print(y); // Should fail
-    const ref_y_outer = try allocator.create(Ast.Expr);
-    ref_y_outer.* = Ast.Expr{ .identifier = "y" };
-    const stmt_fail = Ast.Stmt{ .print = ref_y_outer };
-
-    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt_block } };
-    const program_fail = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt_block, stmt_fail } };
-
-    var sema = try Sema.init(allocator);
+    var sema = try Sema.init(allocator, &diagnostics);
     defer sema.deinit();
 
     try sema.analyze(program);
-
-    var sema2 = try Sema.init(allocator);
-    defer sema2.deinit();
-    try std.testing.expectError(error.UndefinedVariable, sema2.analyze(program_fail));
-}
-
-test "sema type mismatch" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    // let x = "hello";
-    const val = try allocator.create(Ast.Expr);
-    val.* = Ast.Expr{ .string = "hello" };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
-
-    // x + 1
-    const ref_x = try allocator.create(Ast.Expr);
-    ref_x.* = Ast.Expr{ .identifier = "x" };
-    const one = try allocator.create(Ast.Expr);
-    one.* = Ast.Expr{ .number = 1 };
-    const bin = try allocator.create(Ast.Expr);
-    bin.* = Ast.Expr{ .binary = .{ .left = ref_x, .op = .add, .right = one } };
-    const stmt2 = Ast.Stmt{ .print = bin };
-
-    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2 } };
-
-    var sema = try Sema.init(allocator);
-    defer sema.deinit();
-
-    try std.testing.expectError(error.TypeMismatch, sema.analyze(program));
-}
-
-test "sema for loop" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    // for (let i = 0; i < 10; i = i + 1) { print(i); }
-
-    // Init: let i = 0;
-    const val_0 = try allocator.create(Ast.Expr);
-    val_0.* = Ast.Expr{ .number = 0 };
-    const init_stmt = try allocator.create(Ast.Stmt);
-    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .type = null, .value = val_0 } };
-
-    // Cond: i < 10
-    const ref_i = try allocator.create(Ast.Expr);
-    ref_i.* = Ast.Expr{ .identifier = "i" };
-    const val_10 = try allocator.create(Ast.Expr);
-    val_10.* = Ast.Expr{ .number = 10 };
-    const cond_expr = try allocator.create(Ast.Expr);
-    cond_expr.* = Ast.Expr{ .binary = .{ .left = ref_i, .op = .less, .right = val_10 } };
-
-    // Incr: i = i + 1
-    const ref_i_2 = try allocator.create(Ast.Expr);
-    ref_i_2.* = Ast.Expr{ .identifier = "i" };
-    const val_1 = try allocator.create(Ast.Expr);
-    val_1.* = Ast.Expr{ .number = 1 };
-    const add_expr = try allocator.create(Ast.Expr);
-    add_expr.* = Ast.Expr{ .binary = .{ .left = ref_i_2, .op = .add, .right = val_1 } };
-    const incr_stmt = try allocator.create(Ast.Stmt);
-    incr_stmt.* = Ast.Stmt{ .assign = .{ .name = "i", .value = add_expr } };
-
-    // Body: print(i)
-    const ref_i_3 = try allocator.create(Ast.Expr);
-    ref_i_3.* = Ast.Expr{ .identifier = "i" };
-    const body_stmt = try allocator.create(Ast.Stmt);
-    body_stmt.* = Ast.Stmt{ .print = ref_i_3 };
-
-    const for_stmt = Ast.Stmt{ .for_stmt = .{
-        .init = init_stmt,
-        .condition = cond_expr,
-        .increment = incr_stmt,
-        .body = body_stmt,
-    } };
-
-    const program = Ast.Program{ .statements = &[_]Ast.Stmt{for_stmt} };
-
-    var sema = try Sema.init(allocator);
-    defer sema.deinit();
-
-    try sema.analyze(program);
-}
-
-test "sema arrays" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    // let a = [1, 2];
-    const one = try allocator.create(Ast.Expr);
-    one.* = Ast.Expr{ .number = 1 };
-    const two = try allocator.create(Ast.Expr);
-    two.* = Ast.Expr{ .number = 2 };
-    const elements = try allocator.alloc(*Ast.Expr, 2);
-    elements[0] = one;
-    elements[1] = two;
-    const array_lit = try allocator.create(Ast.Expr);
-    array_lit.* = Ast.Expr{ .array_literal = elements };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "a", .type = null, .value = array_lit } };
-
-    // a[0] = 10;
-    const zero = try allocator.create(Ast.Expr);
-    zero.* = Ast.Expr{ .number = 0 };
-    const ten = try allocator.create(Ast.Expr);
-    ten.* = Ast.Expr{ .number = 10 };
-    const stmt2 = Ast.Stmt{ .array_assign = .{ .name = "a", .index = zero, .value = ten } };
-
-    // print(a[1]);
-    const ref_a = try allocator.create(Ast.Expr);
-    ref_a.* = Ast.Expr{ .identifier = "a" };
-    const one_idx = try allocator.create(Ast.Expr);
-    one_idx.* = Ast.Expr{ .number = 1 };
-    const index_expr = try allocator.create(Ast.Expr);
-    index_expr.* = Ast.Expr{ .index = .{ .callee = ref_a, .index = one_idx } };
-    const stmt3 = Ast.Stmt{ .print = index_expr };
-
-    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2, stmt3 } };
-
-    var sema = try Sema.init(allocator);
-    defer sema.deinit();
-
-    try sema.analyze(program);
-}
-
-test "sema structs" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    // struct Point { x: int, y: int }
-    const fields = try allocator.alloc(Ast.StructField, 2);
-    fields[0] = .{ .name = "x", .type = .int };
-    fields[1] = .{ .name = "y", .type = .int };
-    const stmt1 = Ast.Stmt{ .struct_decl = .{ .name = "Point", .fields = fields } };
-
-    // let p = Point { x: 1, y: 2 };
-    const one = try allocator.create(Ast.Expr);
-    one.* = Ast.Expr{ .number = 1 };
-    const two = try allocator.create(Ast.Expr);
-    two.* = Ast.Expr{ .number = 2 };
-    const struct_fields = try allocator.alloc(Ast.StructFieldInit, 2);
-    struct_fields[0] = .{ .name = "x", .value = one };
-    struct_fields[1] = .{ .name = "y", .value = two };
-    const struct_lit = try allocator.create(Ast.Expr);
-    struct_lit.* = Ast.Expr{ .struct_literal = .{ .struct_name = "Point", .fields = struct_fields } };
-    const stmt2 = Ast.Stmt{ .let = .{ .name = "p", .type = null, .value = struct_lit } };
-
-    // print(p.x);
-    const ref_p = try allocator.create(Ast.Expr);
-    ref_p.* = Ast.Expr{ .identifier = "p" };
-    const field_access = try allocator.create(Ast.Expr);
-    field_access.* = Ast.Expr{ .field_access = .{ .object = ref_p, .field = "x" } };
-    const stmt3 = Ast.Stmt{ .print = field_access };
-
-    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2, stmt3 } };
-
-    var sema = try Sema.init(allocator);
-    defer sema.deinit();
-
-    try sema.analyze(program);
+    try std.testing.expect(diagnostics.hasErrors());
 }
