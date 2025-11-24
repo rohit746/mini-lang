@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     // This creates an executable. An executable needs to have a root module
     // which needs to expose a `main` function.
     const exe = b.addExecutable(.{
-        .name = "zig_test",
+        .name = "minic",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

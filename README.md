@@ -44,7 +44,7 @@ To build the compiler executable:
 zig build
 ```
 
-The executable will be located at `zig-out/bin/zig_test`.
+The executable will be located at `zig-out/bin/minic`.
 
 ### Run a Program
 
@@ -57,7 +57,7 @@ zig build run -- test.mini
 Or directly using the executable:
 
 ```bash
-./zig-out/bin/zig_test test.mini
+./zig-out/bin/minic test.mini
 ```
 
 ### Run Tests
