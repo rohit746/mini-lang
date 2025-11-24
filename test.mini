@@ -1,22 +1,78 @@
-let s = "hello world";
-print(s);
-print("direct string");
-
+// 1. Variables & Types
+let x = 10;
+let y = 20;
+let s = "Hello, Mini!";
 let t = true;
 let f = false;
-print(t);
-print(f);
 
-if (t && t) { print(1); } else { print(0); }
-if (t || f) { print(1); } else { print(0); }
-if (f && t) { print(1); } else { print(0); }
+print(s);
+print(x);
 
-let x = 10;
-let neg_x = -x;
-print(neg_x);
+// 2. Arithmetic
+let sum = x + y;
+let diff = y - x;
+let prod = x * 2;
+let quot = y / 2;
 
-let not_t = !t;
-print(not_t);
+print(sum);  // 30
+print(diff); // 10
+print(prod); // 20
+print(quot); // 10
 
-if (!f) { print(1); } else { print(0); }
+// 3. Logic & Unary
+if (t && !f) {
+    print(1); // Should print 1
+}
+
+let neg = -x;
+print(neg); // -10
+
+// 4. Control Flow
+if (x < y) {
+    print("x is smaller");
+} else {
+    print("x is bigger");
+}
+
+// While Loop
+let count = 3;
+while (count > 0) {
+    print(count);
+    count = count - 1;
+}
+
+// For Loop
+print("For Loop:");
+for (let i = 0; i < 3; i = i + 1) {
+    print(i);
+}
+
+// 5. Arrays
+print("Arrays:");
+let arr = [100, 200, 300];
+print(arr[0]);
+print(arr[1]);
+print(arr[2]);
+
+arr[1] = 999;
+print(arr[1]); // 999
+
+// 6. Functions
+fn add(a, b) {
+    return a + b;
+}
+
+fn fib(n) {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+let res = add(x, y);
+print(res); // 30
+
+let f6 = fib(6);
+print(f6); // 8
+
 

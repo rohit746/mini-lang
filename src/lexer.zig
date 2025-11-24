@@ -42,6 +42,8 @@ pub const Token = struct {
         r_paren,
         l_brace,
         r_brace,
+        l_bracket,
+        r_bracket,
         semicolon,
         comma,
         string_literal,
@@ -85,6 +87,8 @@ pub const Lexer = struct {
             ')' => .r_paren,
             '{' => .l_brace,
             '}' => .r_brace,
+            '[' => .l_bracket,
+            ']' => .r_bracket,
             ';' => .semicolon,
             ',' => .comma,
             '"' => {
@@ -274,5 +278,27 @@ test "lexer for loop" {
     try std.testing.expectEqual(Token.Tag.r_paren, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.r_brace, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
+}
+
+test "lexer arrays" {
+    const source = "let a = [1, 2, 3]; a[0]";
+    var lexer = Lexer.init(source);
+
+    try std.testing.expectEqual(Token.Tag.keyword_let, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.equal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.l_bracket, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.comma, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.comma, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.r_bracket, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.l_bracket, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.r_bracket, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
 }

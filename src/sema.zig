@@ -99,6 +99,18 @@ pub const Sema = struct {
                     return error.UndefinedVariable;
                 }
             },
+            .array_assign => |aa| {
+                const index_type = try self.analyzeExpr(aa.index);
+                if (index_type != .int) return error.TypeMismatch;
+                const value_type = try self.analyzeExpr(aa.value);
+                if (value_type != .int) return error.TypeMismatch;
+
+                if (self.current_scope.get(aa.name)) |info| {
+                    if (info.type != .array_int) return error.TypeMismatch;
+                } else {
+                    return error.UndefinedVariable;
+                }
+            },
             .print => |expr| {
                 _ = try self.analyzeExpr(expr);
             },
@@ -218,6 +230,20 @@ pub const Sema = struct {
                     _ = try self.analyzeExpr(arg);
                 }
                 // Assume functions return int
+                return .int;
+            },
+            .array_literal => |elements| {
+                for (elements) |elem| {
+                    const t = try self.analyzeExpr(elem);
+                    if (t != .int) return error.TypeMismatch;
+                }
+                return .array_int;
+            },
+            .index => |idx| {
+                const callee_type = try self.analyzeExpr(idx.callee);
+                if (callee_type != .array_int) return error.TypeMismatch;
+                const index_type = try self.analyzeExpr(idx.index);
+                if (index_type != .int) return error.TypeMismatch;
                 return .int;
             },
         }
@@ -396,6 +422,47 @@ test "sema for loop" {
     } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{for_stmt} };
+
+    var sema = try Sema.init(allocator);
+    defer sema.deinit();
+
+    try sema.analyze(program);
+}
+
+test "sema arrays" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // let a = [1, 2];
+    const one = try allocator.create(Ast.Expr);
+    one.* = Ast.Expr{ .number = 1 };
+    const two = try allocator.create(Ast.Expr);
+    two.* = Ast.Expr{ .number = 2 };
+    const elements = try allocator.alloc(*Ast.Expr, 2);
+    elements[0] = one;
+    elements[1] = two;
+    const array_lit = try allocator.create(Ast.Expr);
+    array_lit.* = Ast.Expr{ .array_literal = elements };
+    const stmt1 = Ast.Stmt{ .let = .{ .name = "a", .value = array_lit } };
+
+    // a[0] = 10;
+    const zero = try allocator.create(Ast.Expr);
+    zero.* = Ast.Expr{ .number = 0 };
+    const ten = try allocator.create(Ast.Expr);
+    ten.* = Ast.Expr{ .number = 10 };
+    const stmt2 = Ast.Stmt{ .array_assign = .{ .name = "a", .index = zero, .value = ten } };
+
+    // print(a[1]);
+    const ref_a = try allocator.create(Ast.Expr);
+    ref_a.* = Ast.Expr{ .identifier = "a" };
+    const one_idx = try allocator.create(Ast.Expr);
+    one_idx.* = Ast.Expr{ .number = 1 };
+    const index_expr = try allocator.create(Ast.Expr);
+    index_expr.* = Ast.Expr{ .index = .{ .callee = ref_a, .index = one_idx } };
+    const stmt3 = Ast.Stmt{ .print = index_expr };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2, stmt3 } };
 
     var sema = try Sema.init(allocator);
     defer sema.deinit();

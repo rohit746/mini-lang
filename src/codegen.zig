@@ -146,6 +146,8 @@ pub const Codegen = struct {
                 }
             },
             .call => return .int, // Assume int return
+            .array_literal => return .array_int,
+            .index => return .int,
         }
     }
 
@@ -163,6 +165,32 @@ pub const Codegen = struct {
                 try self.genExpr(assign.value);
                 const info = self.current_scope.get(assign.name) orelse return error.UnknownVariable;
                 try self.emit("  mov %rax, -{d}(%rbp)\n", .{info.offset});
+            },
+            .array_assign => |aa| {
+                const info = self.current_scope.get(aa.name) orelse return error.UnknownVariable;
+
+                // Calculate address
+                try self.genExpr(aa.index);
+                try self.emit("  push %rax\n", .{}); // Push index
+
+                try self.genExpr(aa.value);
+                try self.emit("  push %rax\n", .{}); // Push value
+
+                // Load base pointer
+                try self.emit("  mov -{d}(%rbp), %rbx\n", .{info.offset});
+
+                // Pop value
+                try self.emit("  pop %rcx\n", .{}); // Value in rcx
+
+                // Pop index
+                try self.emit("  pop %rax\n", .{}); // Index in rax
+
+                // Calculate address: Base - Index * 8
+                try self.emit("  imul $8, %rax\n", .{});
+                try self.emit("  sub %rax, %rbx\n", .{});
+
+                // Store value
+                try self.emit("  mov %rcx, (%rbx)\n", .{});
             },
             .print => |expr| {
                 try self.genExpr(expr);
@@ -427,6 +455,34 @@ pub const Codegen = struct {
 
                 try self.emit("  call _{s}\n", .{call.callee});
             },
+            .array_literal => |elements| {
+                const start_offset = self.stack_offset;
+
+                for (elements) |elem| {
+                    try self.genExpr(elem);
+                    self.stack_offset += 8;
+                    try self.emit("  mov %rax, -{d}(%rbp)\n", .{self.stack_offset});
+                }
+
+                // Return address of first element
+                try self.emit("  lea -{d}(%rbp), %rax\n", .{start_offset + 8});
+            },
+            .index => |idx| {
+                try self.genExpr(idx.callee); // Returns pointer to base (address of [0])
+                try self.emit("  push %rax\n", .{});
+
+                try self.genExpr(idx.index);
+                try self.emit("  mov %rax, %rbx\n", .{}); // Index in rbx
+
+                try self.emit("  pop %rax\n", .{}); // Base in rax
+
+                // Address = Base - Index * 8
+                try self.emit("  imul $8, %rbx\n", .{});
+                try self.emit("  sub %rbx, %rax\n", .{});
+
+                // Load value
+                try self.emit("  mov (%rax), %rax\n", .{});
+            },
         }
     }
 };
@@ -603,4 +659,68 @@ test "codegen for loop" {
     try std.testing.expect(std.mem.indexOf(u8, code, "jmp L") != null);
     try std.testing.expect(std.mem.indexOf(u8, code, "je L") != null);
     try std.testing.expect(std.mem.indexOf(u8, code, "add %rbx, %rax") != null); // i + 1
+}
+
+test "codegen arrays" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // let arr = [1, 2, 3];
+    const one = try allocator.create(Ast.Expr);
+    one.* = Ast.Expr{ .number = 1 };
+    const two = try allocator.create(Ast.Expr);
+    two.* = Ast.Expr{ .number = 2 };
+    const three = try allocator.create(Ast.Expr);
+    three.* = Ast.Expr{ .number = 3 };
+
+    const array_lit = try allocator.create(Ast.Expr);
+    array_lit.* = Ast.Expr{ .array_literal = &[_]*Ast.Expr{ one, two, three } };
+
+    const let_arr = Ast.Stmt{ .let = .{ .name = "arr", .value = array_lit } };
+
+    // let x = arr[1];
+    const arr_ref = try allocator.create(Ast.Expr);
+    arr_ref.* = Ast.Expr{ .identifier = "arr" };
+    const idx_1 = try allocator.create(Ast.Expr);
+    idx_1.* = Ast.Expr{ .number = 1 };
+
+    const index_expr = try allocator.create(Ast.Expr);
+    index_expr.* = Ast.Expr{ .index = .{ .callee = arr_ref, .index = idx_1 } };
+
+    const let_x = Ast.Stmt{ .let = .{ .name = "x", .value = index_expr } };
+
+    // arr[2] = 42;
+    const arr_ref_2 = try allocator.create(Ast.Expr);
+    arr_ref_2.* = Ast.Expr{ .identifier = "arr" };
+    const idx_2 = try allocator.create(Ast.Expr);
+    idx_2.* = Ast.Expr{ .number = 2 };
+    const val_42 = try allocator.create(Ast.Expr);
+    val_42.* = Ast.Expr{ .number = 42 };
+
+    const assign_stmt = Ast.Stmt{ .array_assign = .{ .name = "arr", .index = idx_2, .value = val_42 } };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ let_arr, let_x, assign_stmt } };
+
+    var codegen = try Codegen.init(allocator);
+    defer codegen.deinit();
+
+    const code = try codegen.generate(program);
+    defer allocator.free(code);
+
+    // Check for array literal construction (stack stores)
+    // We expect 3 stores for 1, 2, 3
+    try std.testing.expect(std.mem.indexOf(u8, code, "mov $1, %rax") != null);
+    try std.testing.expect(std.mem.indexOf(u8, code, "mov $2, %rax") != null);
+    try std.testing.expect(std.mem.indexOf(u8, code, "mov $3, %rax") != null);
+
+    // Check for address calculation (imul $8)
+    try std.testing.expect(std.mem.indexOf(u8, code, "imul $8") != null);
+
+    // Check for load (mov (%rax), %rax)
+    try std.testing.expect(std.mem.indexOf(u8, code, "mov (%rax), %rax") != null);
+
+    // Check for store (mov %rcx, (%rbx)) - registers might vary but pattern is store to memory
+    // In array_assign: mov %rcx, (%rbx)
+    try std.testing.expect(std.mem.indexOf(u8, code, "mov %rcx, (%rbx)") != null);
 }

@@ -79,6 +79,14 @@ pub const Parser = struct {
                 const value = try self.parseExpression();
                 try self.eat(.semicolon);
                 return Ast.Stmt{ .assign = .{ .name = name, .value = value } };
+            } else if (self.current_token.tag == .l_bracket) {
+                self.advance(); // Eat `[`
+                const index = try self.parseExpression();
+                try self.eat(.r_bracket);
+                try self.eat(.equal);
+                const value = try self.parseExpression();
+                try self.eat(.semicolon);
+                return Ast.Stmt{ .array_assign = .{ .name = name, .index = index, .value = value } };
             } else if (self.current_token.tag == .l_paren) {
                 try self.eat(.l_paren);
                 var args = std.ArrayListUnmanaged(*Ast.Expr){};
@@ -395,13 +403,15 @@ pub const Parser = struct {
     }
 
     fn parsePrimary(self: *Parser) ParseError!*Ast.Expr {
+        var expr: *Ast.Expr = undefined;
+
         if (self.current_token.tag == .number_literal) {
             const text = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
             const num = try std.fmt.parseInt(i64, text, 10);
             self.advance();
             const node = try self.allocator.create(Ast.Expr);
             node.* = Ast.Expr{ .number = num };
-            return node;
+            expr = node;
         } else if (self.current_token.tag == .string_literal) {
             // Strip quotes
             const raw = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
@@ -409,17 +419,17 @@ pub const Parser = struct {
             self.advance();
             const node = try self.allocator.create(Ast.Expr);
             node.* = Ast.Expr{ .string = content };
-            return node;
+            expr = node;
         } else if (self.current_token.tag == .keyword_true) {
             self.advance();
             const node = try self.allocator.create(Ast.Expr);
             node.* = Ast.Expr{ .boolean = true };
-            return node;
+            expr = node;
         } else if (self.current_token.tag == .keyword_false) {
             self.advance();
             const node = try self.allocator.create(Ast.Expr);
             node.* = Ast.Expr{ .boolean = false };
-            return node;
+            expr = node;
         } else if (self.current_token.tag == .identifier) {
             const name = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
             self.advance();
@@ -445,20 +455,51 @@ pub const Parser = struct {
 
                 const node = try self.allocator.create(Ast.Expr);
                 node.* = Ast.Expr{ .call = .{ .callee = name, .args = try args.toOwnedSlice(self.allocator) } };
-                return node;
+                expr = node;
             } else {
                 const node = try self.allocator.create(Ast.Expr);
                 node.* = Ast.Expr{ .identifier = name };
-                return node;
+                expr = node;
             }
         } else if (self.current_token.tag == .l_paren) {
             self.advance();
-            const expr = try self.parseExpression();
+            expr = try self.parseExpression();
             try self.eat(.r_paren);
-            return expr;
+        } else if (self.current_token.tag == .l_bracket) {
+            self.advance(); // eat [
+            var elements = std.ArrayListUnmanaged(*Ast.Expr){};
+            errdefer elements.deinit(self.allocator);
+
+            if (self.current_token.tag != .r_bracket) {
+                while (true) {
+                    const elem = try self.parseExpression();
+                    try elements.append(self.allocator, elem);
+                    if (self.current_token.tag == .comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            try self.eat(.r_bracket);
+            const node = try self.allocator.create(Ast.Expr);
+            node.* = Ast.Expr{ .array_literal = try elements.toOwnedSlice(self.allocator) };
+            expr = node;
         } else {
             return error.UnexpectedToken;
         }
+
+        // Postfix operators (indexing)
+        while (self.current_token.tag == .l_bracket) {
+            self.advance(); // eat [
+            const index_expr = try self.parseExpression();
+            try self.eat(.r_bracket);
+            const node = try self.allocator.create(Ast.Expr);
+            node.* = Ast.Expr{ .index = .{ .callee = expr, .index = index_expr } };
+            expr = node;
+        }
+
+        return expr;
     }
 };
 
@@ -601,6 +642,65 @@ test "parser for loop" {
                     else => return error.TestUnexpectedResult,
                 }
             } else return error.TestUnexpectedResult;
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "parser arrays" {
+    const source =
+        \\let a = [1, 2, 3];
+        \\let b = a[0];
+        \\a[1] = 10;
+    ;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+
+    try std.testing.expectEqual(@as(usize, 3), program.statements.len);
+
+    // let a = [1, 2, 3];
+    const stmt1 = program.statements[0];
+    switch (stmt1) {
+        .let => |l| {
+            try std.testing.expectEqualStrings("a", l.name);
+            switch (l.value.*) {
+                .array_literal => |arr| {
+                    try std.testing.expectEqual(@as(usize, 3), arr.len);
+                },
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    // let b = a[0];
+    const stmt2 = program.statements[1];
+    switch (stmt2) {
+        .let => |l| {
+            try std.testing.expectEqualStrings("b", l.name);
+            switch (l.value.*) {
+                .index => |idx| {
+                    switch (idx.callee.*) {
+                        .identifier => |id| try std.testing.expectEqualStrings("a", id),
+                        else => return error.TestUnexpectedResult,
+                    }
+                },
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    // a[1] = 10;
+    const stmt3 = program.statements[2];
+    switch (stmt3) {
+        .array_assign => |aa| {
+            try std.testing.expectEqualStrings("a", aa.name);
         },
         else => return error.TestUnexpectedResult,
     }

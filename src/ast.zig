@@ -38,6 +38,11 @@ pub const Expr = union(enum) {
         callee: []const u8,
         args: []const *Expr,
     },
+    array_literal: []const *Expr,
+    index: struct {
+        callee: *Expr,
+        index: *Expr,
+    },
 };
 
 pub const Stmt = union(enum) {
@@ -47,6 +52,11 @@ pub const Stmt = union(enum) {
     },
     assign: struct {
         name: []const u8,
+        value: *Expr,
+    },
+    array_assign: struct {
+        name: []const u8,
+        index: *Expr,
         value: *Expr,
     },
     print: *Expr,
@@ -79,6 +89,7 @@ pub const Type = enum {
     string,
     bool,
     void,
+    array_int,
 };
 
 pub const Program = struct {

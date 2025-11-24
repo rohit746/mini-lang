@@ -8,12 +8,14 @@ A simple compiler for a custom programming language ("Mini") written in Zig. Thi
   - Integers (`i64`)
   - Booleans (`true`, `false`)
   - Strings (String literals)
+  - Arrays (Integer arrays)
 - **Variables**: `let` declarations and assignment.
 - **Arithmetic**: `+`, `-`, `*`, `/`.
 - **Logic**: `&&`, `||`, `!`, `==`, `!=`, `<`, `<=`, `>`, `>=`.
 - **Control Flow**:
   - `if` / `else` statements.
   - `while` loops.
+  - `for` loops.
 - **Functions**:
   - Function declarations (`fn`).
   - Function calls with arguments.
@@ -90,6 +92,20 @@ if (x < 20) {
 while (x > 0) {
     x = x - 1;
 }
+
+for (let i = 0; i < 10; i = i + 1) {
+    print(i);
+}
+```
+
+### Arrays
+
+```mini
+let arr = [10, 20, 30];
+print(arr[0]); // 10
+
+arr[1] = 42;
+print(arr[1]); // 42
 ```
 
 ### Functions
