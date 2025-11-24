@@ -19,6 +19,7 @@ pub const Token = struct {
         keyword_if,
         keyword_else,
         keyword_while,
+        keyword_for,
         keyword_fn,
         keyword_return,
         keyword_true,
@@ -117,6 +118,7 @@ pub const Lexer = struct {
                 if (std.mem.eql(u8, ident, "if")) return .{ .tag = .keyword_if, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "else")) return .{ .tag = .keyword_else, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "while")) return .{ .tag = .keyword_while, .loc = .{ .start = start, .end = self.index } };
+                if (std.mem.eql(u8, ident, "for")) return .{ .tag = .keyword_for, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "fn")) return .{ .tag = .keyword_fn, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "return")) return .{ .tag = .keyword_return, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "true")) return .{ .tag = .keyword_true, .loc = .{ .start = start, .end = self.index } };
@@ -241,5 +243,36 @@ test "lexer booleans" {
     try std.testing.expectEqual(Token.Tag.keyword_false, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.pipe_pipe, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.keyword_true, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
+}
+
+test "lexer for loop" {
+    const source = "for (let i = 0; i < 10; i = i + 1) { print(i); }";
+    var lexer = Lexer.init(source);
+
+    try std.testing.expectEqual(Token.Tag.keyword_for, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.l_paren, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.keyword_let, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.equal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.less, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.equal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.plus, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.r_paren, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.l_brace, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.keyword_print, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.l_paren, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.r_paren, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.r_brace, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
 }

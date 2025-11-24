@@ -144,6 +144,21 @@ pub const Sema = struct {
                     _ = try self.analyzeExpr(expr);
                 }
             },
+            .for_stmt => |for_s| {
+                try self.enterScope();
+                if (for_s.init) |init_s| {
+                    try self.analyzeStmt(init_s.*);
+                }
+                if (for_s.condition) |cond| {
+                    const cond_type = try self.analyzeExpr(cond);
+                    if (cond_type != .bool) return error.TypeMismatch;
+                }
+                if (for_s.increment) |incr| {
+                    try self.analyzeStmt(incr.*);
+                }
+                try self.analyzeStmt(for_s.body.*);
+                self.leaveScope();
+            },
         }
     }
 
@@ -334,4 +349,56 @@ test "sema type mismatch" {
     defer sema.deinit();
 
     try std.testing.expectError(error.TypeMismatch, sema.analyze(program));
+}
+
+test "sema for loop" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // for (let i = 0; i < 10; i = i + 1) { print(i); }
+    
+    // Init: let i = 0;
+    const val_0 = try allocator.create(Ast.Expr);
+    val_0.* = Ast.Expr{ .number = 0 };
+    const init_stmt = try allocator.create(Ast.Stmt);
+    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .value = val_0 } };
+
+    // Cond: i < 10
+    const ref_i = try allocator.create(Ast.Expr);
+    ref_i.* = Ast.Expr{ .identifier = "i" };
+    const val_10 = try allocator.create(Ast.Expr);
+    val_10.* = Ast.Expr{ .number = 10 };
+    const cond_expr = try allocator.create(Ast.Expr);
+    cond_expr.* = Ast.Expr{ .binary = .{ .left = ref_i, .op = .less, .right = val_10 } };
+
+    // Incr: i = i + 1
+    const ref_i_2 = try allocator.create(Ast.Expr);
+    ref_i_2.* = Ast.Expr{ .identifier = "i" };
+    const val_1 = try allocator.create(Ast.Expr);
+    val_1.* = Ast.Expr{ .number = 1 };
+    const add_expr = try allocator.create(Ast.Expr);
+    add_expr.* = Ast.Expr{ .binary = .{ .left = ref_i_2, .op = .add, .right = val_1 } };
+    const incr_stmt = try allocator.create(Ast.Stmt);
+    incr_stmt.* = Ast.Stmt{ .assign = .{ .name = "i", .value = add_expr } };
+
+    // Body: print(i)
+    const ref_i_3 = try allocator.create(Ast.Expr);
+    ref_i_3.* = Ast.Expr{ .identifier = "i" };
+    const body_stmt = try allocator.create(Ast.Stmt);
+    body_stmt.* = Ast.Stmt{ .print = ref_i_3 };
+
+    const for_stmt = Ast.Stmt{ .for_stmt = .{
+        .init = init_stmt,
+        .condition = cond_expr,
+        .increment = incr_stmt,
+        .body = body_stmt,
+    } };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{for_stmt} };
+
+    var sema = try Sema.init(allocator);
+    defer sema.deinit();
+
+    try sema.analyze(program);
 }

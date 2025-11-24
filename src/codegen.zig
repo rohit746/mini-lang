@@ -267,6 +267,35 @@ pub const Codegen = struct {
                 try self.emit("  leave\n", .{});
                 try self.emit("  ret\n", .{});
             },
+            .for_stmt => |for_s| {
+                try self.enterScope();
+
+                if (for_s.init) |init_s| {
+                    try self.genStmt(init_s.*);
+                }
+
+                const start_label = self.newLabel();
+                const end_label = self.newLabel();
+
+                try self.emit("L{d}:\n", .{start_label});
+
+                if (for_s.condition) |cond| {
+                    try self.genExpr(cond);
+                    try self.emit("  cmp $0, %rax\n", .{});
+                    try self.emit("  je L{d}\n", .{end_label});
+                }
+
+                try self.genStmt(for_s.body.*);
+
+                if (for_s.increment) |incr| {
+                    try self.genStmt(incr.*);
+                }
+
+                try self.emit("  jmp L{d}\n", .{start_label});
+                try self.emit("L{d}:\n", .{end_label});
+
+                self.leaveScope();
+            },
         }
     }
 
@@ -508,4 +537,70 @@ test "codegen unary" {
     try std.testing.expect(std.mem.indexOf(u8, code, "neg %rax") != null);
     // Check for not (sete)
     try std.testing.expect(std.mem.indexOf(u8, code, "sete %al") != null);
+}
+
+test "codegen for loop" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // for (let i = 0; i < 10; i = i + 1) { print(i); }
+
+    // Init: let i = 0;
+    const val_0 = try allocator.create(Ast.Expr);
+    val_0.* = Ast.Expr{ .number = 0 };
+    const init_stmt = try allocator.create(Ast.Stmt);
+    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .value = val_0 } };
+
+    // Cond: i < 10
+    const ref_i = try allocator.create(Ast.Expr);
+    ref_i.* = Ast.Expr{ .identifier = "i" };
+    const val_10 = try allocator.create(Ast.Expr);
+    val_10.* = Ast.Expr{ .number = 10 };
+    const cond_expr = try allocator.create(Ast.Expr);
+    cond_expr.* = Ast.Expr{ .binary = .{ .left = ref_i, .op = .less, .right = val_10 } };
+
+    // Incr: i = i + 1
+    const ref_i_2 = try allocator.create(Ast.Expr);
+    ref_i_2.* = Ast.Expr{ .identifier = "i" };
+    const val_1 = try allocator.create(Ast.Expr);
+    val_1.* = Ast.Expr{ .number = 1 };
+    const add_expr = try allocator.create(Ast.Expr);
+    add_expr.* = Ast.Expr{ .binary = .{ .left = ref_i_2, .op = .add, .right = val_1 } };
+    const incr_stmt = try allocator.create(Ast.Stmt);
+    incr_stmt.* = Ast.Stmt{ .assign = .{ .name = "i", .value = add_expr } };
+
+    // Body: print(i)
+    const ref_i_3 = try allocator.create(Ast.Expr);
+    ref_i_3.* = Ast.Expr{ .identifier = "i" };
+    const body_stmt = try allocator.create(Ast.Stmt);
+    body_stmt.* = Ast.Stmt{ .print = ref_i_3 };
+
+    const for_stmt = Ast.Stmt{ .for_stmt = .{
+        .init = init_stmt,
+        .condition = cond_expr,
+        .increment = incr_stmt,
+        .body = body_stmt,
+    } };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{for_stmt} };
+
+    var codegen = try Codegen.init(allocator);
+    defer codegen.deinit();
+
+    const code = try codegen.generate(program);
+    defer allocator.free(code);
+
+    // Check for loop structure
+    // We expect a jump back to start
+    // We expect a conditional jump to end
+    // We expect init code
+    // We expect increment code
+
+    // Since labels are dynamic (L0, L1...), we can't check exact strings easily for labels.
+    // But we can check for instructions.
+
+    try std.testing.expect(std.mem.indexOf(u8, code, "jmp L") != null);
+    try std.testing.expect(std.mem.indexOf(u8, code, "je L") != null);
+    try std.testing.expect(std.mem.indexOf(u8, code, "add %rbx, %rax") != null); // i + 1
 }

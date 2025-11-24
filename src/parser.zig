@@ -61,6 +61,8 @@ pub const Parser = struct {
             return self.parseIfStmt();
         } else if (self.current_token.tag == .keyword_while) {
             return self.parseWhileStmt();
+        } else if (self.current_token.tag == .keyword_for) {
+            return self.parseForStmt();
         } else if (self.current_token.tag == .keyword_fn) {
             return self.parseFnDecl();
         } else if (self.current_token.tag == .keyword_return) {
@@ -193,6 +195,52 @@ pub const Parser = struct {
         body.* = try self.parseStatement();
 
         return Ast.Stmt{ .while_stmt = .{ .condition = condition, .body = body } };
+    }
+
+    fn parseForStmt(self: *Parser) ParseError!Ast.Stmt {
+        try self.eat(.keyword_for);
+        try self.eat(.l_paren);
+
+        var init_stmt: ?*Ast.Stmt = null;
+        if (self.current_token.tag != .semicolon) {
+            const stmt = try self.parseStatement();
+            init_stmt = try self.allocator.create(Ast.Stmt);
+            init_stmt.?.* = stmt;
+        } else {
+            try self.eat(.semicolon);
+        }
+
+        var condition: ?*Ast.Expr = null;
+        if (self.current_token.tag != .semicolon) {
+            condition = try self.parseExpression();
+        }
+        try self.eat(.semicolon);
+
+        var increment: ?*Ast.Stmt = null;
+        if (self.current_token.tag != .r_paren) {
+            if (self.current_token.tag == .identifier) {
+                const start_loc = self.current_token.loc;
+                const name = self.lexer.source[start_loc.start..start_loc.end];
+                self.advance();
+
+                if (self.current_token.tag == .equal) {
+                    self.advance();
+                    const value = try self.parseExpression();
+                    increment = try self.allocator.create(Ast.Stmt);
+                    increment.?.* = Ast.Stmt{ .assign = .{ .name = name, .value = value } };
+                } else {
+                    return error.ExpectedStatement;
+                }
+            } else {
+                return error.ExpectedStatement;
+            }
+        }
+        try self.eat(.r_paren);
+
+        const body = try self.allocator.create(Ast.Stmt);
+        body.* = try self.parseStatement();
+
+        return Ast.Stmt{ .for_stmt = .{ .init = init_stmt, .condition = condition, .increment = increment, .body = body } };
     }
 
     fn parseAssignment(self: *Parser) ParseError!Ast.Stmt {
@@ -501,6 +549,58 @@ test "parser boolean" {
                 },
                 else => return error.TestUnexpectedResult,
             }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "parser for loop" {
+    const source =
+        \\for (let i = 0; i < 10; i = i + 1) {
+        \\    print(i);
+        \\}
+    ;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+
+    try std.testing.expectEqual(@as(usize, 1), program.statements.len);
+    const stmt = program.statements[0];
+    switch (stmt) {
+        .for_stmt => |f| {
+            // Check init
+            if (f.init) |init_stmt| {
+                switch (init_stmt.*) {
+                    .let => |l| {
+                        try std.testing.expectEqualStrings("i", l.name);
+                    },
+                    else => return error.TestUnexpectedResult,
+                }
+            } else return error.TestUnexpectedResult;
+
+            // Check condition
+            if (f.condition) |cond| {
+                switch (cond.*) {
+                    .binary => |bin| {
+                        try std.testing.expectEqual(Ast.BinaryOp.less, bin.op);
+                    },
+                    else => return error.TestUnexpectedResult,
+                }
+            } else return error.TestUnexpectedResult;
+
+            // Check increment
+            if (f.increment) |incr| {
+                switch (incr.*) {
+                    .assign => |a| {
+                        try std.testing.expectEqualStrings("i", a.name);
+                    },
+                    else => return error.TestUnexpectedResult,
+                }
+            } else return error.TestUnexpectedResult;
         },
         else => return error.TestUnexpectedResult,
     }

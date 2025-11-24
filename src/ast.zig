@@ -60,6 +60,12 @@ pub const Stmt = union(enum) {
         condition: *Expr,
         body: *Stmt,
     },
+    for_stmt: struct {
+        init: ?*Stmt,
+        condition: ?*Expr,
+        increment: ?*Stmt,
+        body: *Stmt,
+    },
     fn_decl: struct {
         name: []const u8,
         params: []const []const u8,
