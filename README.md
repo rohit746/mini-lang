@@ -76,9 +76,9 @@ zig build test
 ### Variables
 
 ```mini
-let x = 10;
-let s = "hello";
-let b = true;
+let x: int = 10;
+let s: string = "hello";
+let b: bool = true;
 ```
 
 ### Control Flow
@@ -113,8 +113,8 @@ print(arr[1]); // 42
 
 ```mini
 struct Point {
-    x,
-    y
+    x: int,
+    y: int
 }
 
 let p = Point { x: 10, y: 20 };
@@ -124,7 +124,7 @@ print(p.x);
 ### Functions
 
 ```mini
-fn add(a, b) {
+fn add(a: int, b: int) -> int {
     return a + b;
 }
 
