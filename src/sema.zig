@@ -357,7 +357,7 @@ test "sema for loop" {
     const allocator = arena.allocator();
 
     // for (let i = 0; i < 10; i = i + 1) { print(i); }
-    
+
     // Init: let i = 0;
     const val_0 = try allocator.create(Ast.Expr);
     val_0.* = Ast.Expr{ .number = 0 };
