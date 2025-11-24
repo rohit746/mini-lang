@@ -9,6 +9,7 @@ A simple compiler for a custom programming language ("Mini") written in Zig. Thi
   - Booleans (`true`, `false`)
   - Strings (String literals)
   - Arrays (Integer arrays)
+  - Structs (User-defined types)
 - **Variables**: `let` declarations and assignment.
 - **Arithmetic**: `+`, `-`, `*`, `/`.
 - **Logic**: `&&`, `||`, `!`, `==`, `!=`, `<`, `<=`, `>`, `>=`.
@@ -106,6 +107,18 @@ print(arr[0]); // 10
 
 arr[1] = 42;
 print(arr[1]); // 42
+```
+
+### Structs
+
+```mini
+struct Point {
+    x,
+    y
+}
+
+let p = Point { x: 10, y: 20 };
+print(p.x);
 ```
 
 ### Functions

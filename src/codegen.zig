@@ -32,6 +32,10 @@ const Scope = struct {
     }
 };
 
+const StructDef = struct {
+    field_order: []const []const u8,
+};
+
 pub const Codegen = struct {
     allocator: std.mem.Allocator,
     output: std.ArrayListUnmanaged(u8),
@@ -39,6 +43,7 @@ pub const Codegen = struct {
     current_scope: *Scope,
     label_counter: usize,
     string_literals: std.StringHashMap(usize),
+    structs: std.StringHashMap(StructDef),
 
     pub fn init(allocator: std.mem.Allocator) !Codegen {
         const root = try allocator.create(Scope);
@@ -50,12 +55,14 @@ pub const Codegen = struct {
             .current_scope = root,
             .label_counter = 0,
             .string_literals = std.StringHashMap(usize).init(allocator),
+            .structs = std.StringHashMap(StructDef).init(allocator),
         };
     }
 
     pub fn deinit(self: *Codegen) void {
         self.output.deinit(self.allocator);
         self.string_literals.deinit();
+        self.structs.deinit();
         var scope: ?*Scope = self.current_scope;
         while (scope) |s| {
             const parent = s.parent;
@@ -148,6 +155,8 @@ pub const Codegen = struct {
             .call => return .int, // Assume int return
             .array_literal => return .array_int,
             .index => return .int,
+            .struct_literal => |sl| return Ast.Type{ .struct_type = sl.struct_name },
+            .field_access => return .int, // Assume fields are int for now
         }
     }
 
@@ -324,6 +333,9 @@ pub const Codegen = struct {
 
                 self.leaveScope();
             },
+            .struct_decl => |s| {
+                try self.structs.put(s.name, .{ .field_order = s.fields });
+            },
         }
     }
 
@@ -479,6 +491,62 @@ pub const Codegen = struct {
                 // Address = Base - Index * 8
                 try self.emit("  imul $8, %rbx\n", .{});
                 try self.emit("  sub %rbx, %rax\n", .{});
+
+                // Load value
+                try self.emit("  mov (%rax), %rax\n", .{});
+            },
+            .struct_literal => |sl| {
+                const def = self.structs.get(sl.struct_name) orelse return error.UnknownType;
+                const start_offset = self.stack_offset;
+
+                for (def.field_order) |field_name| {
+                    // Find value in literal
+                    var val_expr: *Ast.Expr = undefined;
+                    var found = false;
+                    for (sl.fields) |f| {
+                        if (std.mem.eql(u8, f.name, field_name)) {
+                            val_expr = f.value;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) return error.MissingField;
+
+                    try self.genExpr(val_expr);
+                    self.stack_offset += 8;
+                    try self.emit("  mov %rax, -{d}(%rbp)\n", .{self.stack_offset});
+                }
+
+                // Return address of first element
+                try self.emit("  lea -{d}(%rbp), %rax\n", .{start_offset + 8});
+            },
+            .field_access => |fa| {
+                // Get object address
+                try self.genExpr(fa.object); // Returns pointer to struct base
+
+                // Find offset of field
+                const obj_type = try self.getExprType(fa.object);
+                const struct_name = switch (obj_type) {
+                    .struct_type => |n| n,
+                    else => return error.TypeMismatch,
+                };
+
+                const def = self.structs.get(struct_name) orelse return error.UnknownType;
+
+                var offset: usize = 0;
+                var found = false;
+                for (def.field_order, 0..) |f, i| {
+                    if (std.mem.eql(u8, f, fa.field)) {
+                        offset = i * 8;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return error.UnknownField;
+
+                if (offset > 0) {
+                    try self.emit("  sub ${d}, %rax\n", .{offset});
+                }
 
                 // Load value
                 try self.emit("  mov (%rax), %rax\n", .{});
@@ -723,4 +791,51 @@ test "codegen arrays" {
     // Check for store (mov %rcx, (%rbx)) - registers might vary but pattern is store to memory
     // In array_assign: mov %rcx, (%rbx)
     try std.testing.expect(std.mem.indexOf(u8, code, "mov %rcx, (%rbx)") != null);
+}
+
+test "codegen structs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // struct Point { x, y }
+    const fields = try allocator.alloc([]const u8, 2);
+    fields[0] = "x";
+    fields[1] = "y";
+    const stmt1 = Ast.Stmt{ .struct_decl = .{ .name = "Point", .fields = fields } };
+
+    // let p = Point { x: 1, y: 2 };
+    const one = try allocator.create(Ast.Expr);
+    one.* = Ast.Expr{ .number = 1 };
+    const two = try allocator.create(Ast.Expr);
+    two.* = Ast.Expr{ .number = 2 };
+    const struct_fields = try allocator.alloc(Ast.StructFieldInit, 2);
+    struct_fields[0] = .{ .name = "x", .value = one };
+    struct_fields[1] = .{ .name = "y", .value = two };
+    const struct_lit = try allocator.create(Ast.Expr);
+    struct_lit.* = Ast.Expr{ .struct_literal = .{ .struct_name = "Point", .fields = struct_fields } };
+    const stmt2 = Ast.Stmt{ .let = .{ .name = "p", .value = struct_lit } };
+
+    // let val = p.y;
+    const ref_p = try allocator.create(Ast.Expr);
+    ref_p.* = Ast.Expr{ .identifier = "p" };
+    const field_access = try allocator.create(Ast.Expr);
+    field_access.* = Ast.Expr{ .field_access = .{ .object = ref_p, .field = "y" } };
+    const stmt3 = Ast.Stmt{ .let = .{ .name = "val", .value = field_access } };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2, stmt3 } };
+
+    var codegen = try Codegen.init(allocator);
+    defer codegen.deinit();
+
+    const code = try codegen.generate(program);
+    defer allocator.free(code);
+
+    // Check for struct literal construction
+    try std.testing.expect(std.mem.indexOf(u8, code, "mov $1, %rax") != null);
+    try std.testing.expect(std.mem.indexOf(u8, code, "mov $2, %rax") != null);
+
+    // Check for field access (offset calculation)
+    // y is at offset 8 (second field)
+    try std.testing.expect(std.mem.indexOf(u8, code, "sub $8, %rax") != null);
 }

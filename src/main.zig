@@ -697,3 +697,83 @@ test "integration arrays" {
     // 10, 20, 30, 42, 82
     try std.testing.expectEqualStrings("10\n20\n30\n42\n82\n", run_result.stdout);
 }
+
+test "integration structs" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const source =
+        \\struct Point { x, y }
+        \\let p = Point { x: 10, y: 20 };
+        \\print(p.x);
+        \\print(p.y);
+        \\
+        \\let p2 = Point { x: 30, y: 40 };
+        \\print(p2.x);
+        \\print(p2.y);
+    ;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Parse
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+
+    // Sema
+    var sema = try Sema.init(allocator);
+    try sema.analyze(program);
+
+    // Codegen
+    var codegen = try Codegen.init(allocator);
+    const code = try codegen.generate(program);
+
+    // Prepare output directory
+    const out_dir_name = "zig-out/test_tmp_structs";
+    try std.fs.cwd().makePath(out_dir_name);
+    const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
+
+    // Write assembly
+    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+
+    // Write runtime
+    try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
+
+    // Compile
+    const out_exe = "test_program_structs";
+    var cc_args = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer cc_args.deinit(allocator);
+    try cc_args.append(allocator, "cc");
+
+    if (builtin.os.tag == .macos and builtin.cpu.arch == .aarch64) {
+        try cc_args.append(allocator, "-arch");
+        try cc_args.append(allocator, "x86_64");
+    }
+
+    try cc_args.append(allocator, "-o");
+    try cc_args.append(allocator, out_exe);
+    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "runtime.c");
+
+    const compile_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = cc_args.items,
+        .cwd = out_dir_name,
+    });
+
+    if (compile_result.term.Exited != 0) {
+        std.debug.print("Compilation failed:\n{s}\n{s}\n", .{ compile_result.stdout, compile_result.stderr });
+        return error.CompilationFailed;
+    }
+
+    // Run
+    const run_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{try std.fs.path.join(allocator, &.{ ".", out_exe })},
+        .cwd = out_dir_name,
+    });
+
+    try std.testing.expectEqual(run_result.term.Exited, 0);
+    // 10, 20, 30, 40
+    try std.testing.expectEqualStrings("10\n20\n30\n40\n", run_result.stdout);
+}

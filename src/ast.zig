@@ -43,6 +43,19 @@ pub const Expr = union(enum) {
         callee: *Expr,
         index: *Expr,
     },
+    struct_literal: struct {
+        struct_name: []const u8,
+        fields: []const StructFieldInit,
+    },
+    field_access: struct {
+        object: *Expr,
+        field: []const u8,
+    },
+};
+
+pub const StructFieldInit = struct {
+    name: []const u8,
+    value: *Expr,
 };
 
 pub const Stmt = union(enum) {
@@ -58,6 +71,10 @@ pub const Stmt = union(enum) {
         name: []const u8,
         index: *Expr,
         value: *Expr,
+    },
+    struct_decl: struct {
+        name: []const u8,
+        fields: []const []const u8,
     },
     print: *Expr,
     block: []const Stmt,
@@ -84,12 +101,13 @@ pub const Stmt = union(enum) {
     return_stmt: ?*Expr,
 };
 
-pub const Type = enum {
+pub const Type = union(enum) {
     int,
     string,
     bool,
     void,
     array_int,
+    struct_type: []const u8,
 };
 
 pub const Program = struct {

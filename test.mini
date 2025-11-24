@@ -75,4 +75,11 @@ print(res); // 30
 let f6 = fib(6);
 print(f6); // 8
 
+// 7. Structs
+print("Structs:");
+struct Point { x, y }
+let p = Point { x: 10, y: 20 };
+print(p.x);
+print(p.y);
+
 

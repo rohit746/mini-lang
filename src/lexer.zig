@@ -22,6 +22,7 @@ pub const Token = struct {
         keyword_for,
         keyword_fn,
         keyword_return,
+        keyword_struct,
         keyword_true,
         keyword_false,
         bang,
@@ -46,6 +47,8 @@ pub const Token = struct {
         r_bracket,
         semicolon,
         comma,
+        dot,
+        colon,
         string_literal,
     };
 };
@@ -91,6 +94,8 @@ pub const Lexer = struct {
             ']' => .r_bracket,
             ';' => .semicolon,
             ',' => .comma,
+            '.' => .dot,
+            ':' => .colon,
             '"' => {
                 self.index += 1; // Skip opening quote
                 while (self.index < self.source.len and self.source[self.index] != '"') {
@@ -125,6 +130,7 @@ pub const Lexer = struct {
                 if (std.mem.eql(u8, ident, "for")) return .{ .tag = .keyword_for, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "fn")) return .{ .tag = .keyword_fn, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "return")) return .{ .tag = .keyword_return, .loc = .{ .start = start, .end = self.index } };
+                if (std.mem.eql(u8, ident, "struct")) return .{ .tag = .keyword_struct, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "true")) return .{ .tag = .keyword_true, .loc = .{ .start = start, .end = self.index } };
                 if (std.mem.eql(u8, ident, "false")) return .{ .tag = .keyword_false, .loc = .{ .start = start, .end = self.index } };
                 return .{ .tag = .identifier, .loc = .{ .start = start, .end = self.index } };
@@ -300,5 +306,36 @@ test "lexer arrays" {
     try std.testing.expectEqual(Token.Tag.l_bracket, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.r_bracket, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
+}
+
+test "lexer structs" {
+    const source = "struct Point { x, y } let p = Point { x: 1, y: 2 }; p.x";
+    var lexer = Lexer.init(source);
+
+    try std.testing.expectEqual(Token.Tag.keyword_struct, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.l_brace, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.comma, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.r_brace, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.keyword_let, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.equal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.l_brace, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.colon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.comma, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.colon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.number_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.r_brace, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.dot, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
 }
