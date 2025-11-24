@@ -17,6 +17,7 @@ A simple compiler for a custom programming language ("Mini") written in Zig. Thi
   - `if` / `else` statements.
   - `while` loops.
   - `for` loops.
+  - `break` and `continue` statements.
 - **Functions**:
   - Function declarations (`fn`).
   - Function calls with arguments.
@@ -94,9 +95,11 @@ if (x < 20) {
 
 while (x > 0) {
     x = x - 1;
+    if (x == 5) break;
 }
 
 for (let i = 0; i < 10; i = i + 1) {
+    if (i == 5) continue;
     print(i);
 }
 ```

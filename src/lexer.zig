@@ -24,6 +24,8 @@ pub const Token = struct {
         keyword_for,
         keyword_fn,
         keyword_return,
+        keyword_break,
+        keyword_continue,
         keyword_struct,
         keyword_true,
         keyword_false,
@@ -143,6 +145,8 @@ pub const Lexer = struct {
                 if (std.mem.eql(u8, ident, "for")) return .{ .tag = .keyword_for, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
                 if (std.mem.eql(u8, ident, "fn")) return .{ .tag = .keyword_fn, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
                 if (std.mem.eql(u8, ident, "return")) return .{ .tag = .keyword_return, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "break")) return .{ .tag = .keyword_break, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                if (std.mem.eql(u8, ident, "continue")) return .{ .tag = .keyword_continue, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
                 if (std.mem.eql(u8, ident, "struct")) return .{ .tag = .keyword_struct, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
                 if (std.mem.eql(u8, ident, "true")) return .{ .tag = .keyword_true, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
                 if (std.mem.eql(u8, ident, "false")) return .{ .tag = .keyword_false, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
@@ -370,5 +374,16 @@ test "lexer arrow" {
     const source = "->";
     var lexer = Lexer.init(source);
     try std.testing.expectEqual(Token.Tag.arrow, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
+}
+
+test "lexer break continue" {
+    const source = "break; continue;";
+    var lexer = Lexer.init(source);
+
+    try std.testing.expectEqual(Token.Tag.keyword_break, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.keyword_continue, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
 }

@@ -6,6 +6,11 @@ const SymbolInfo = struct {
     type: Ast.Type,
 };
 
+const LoopLabels = struct {
+    continue_label: usize,
+    break_label: usize,
+};
+
 const Scope = struct {
     vars: std.StringHashMap(SymbolInfo),
     parent: ?*Scope,
@@ -44,6 +49,7 @@ pub const Codegen = struct {
     label_counter: usize,
     string_literals: std.StringHashMap(usize),
     structs: std.StringHashMap(StructDef),
+    loop_stack: std.ArrayListUnmanaged(LoopLabels),
 
     pub fn init(allocator: std.mem.Allocator) !Codegen {
         const root = try allocator.create(Scope);
@@ -56,6 +62,7 @@ pub const Codegen = struct {
             .label_counter = 0,
             .string_literals = std.StringHashMap(usize).init(allocator),
             .structs = std.StringHashMap(StructDef).init(allocator),
+            .loop_stack = .{},
         };
     }
 
@@ -63,6 +70,7 @@ pub const Codegen = struct {
         self.output.deinit(self.allocator);
         self.string_literals.deinit();
         self.structs.deinit();
+        self.loop_stack.deinit(self.allocator);
         var scope: ?*Scope = self.current_scope;
         while (scope) |s| {
             const parent = s.parent;
@@ -244,6 +252,8 @@ pub const Codegen = struct {
                 const start_label = self.newLabel();
                 const end_label = self.newLabel();
 
+                try self.loop_stack.append(self.allocator, .{ .continue_label = start_label, .break_label = end_label });
+
                 try self.emit("L{d}:\n", .{start_label});
                 try self.genExpr(while_s.condition);
                 try self.emit("  cmp $0, %rax\n", .{});
@@ -253,6 +263,7 @@ pub const Codegen = struct {
                 try self.emit("  jmp L{d}\n", .{start_label});
 
                 try self.emit("L{d}:\n", .{end_label});
+                _ = self.loop_stack.pop();
             },
             .fn_decl => |func| {
                 // Jump over the function definition so it's not executed linearly
@@ -294,6 +305,16 @@ pub const Codegen = struct {
 
                 try self.emit("L{d}:\n", .{end_label});
             },
+            .break_stmt => {
+                if (self.loop_stack.items.len == 0) return error.InvalidJump;
+                const labels = self.loop_stack.items[self.loop_stack.items.len - 1];
+                try self.emit("  jmp L{d}\n", .{labels.break_label});
+            },
+            .continue_stmt => {
+                if (self.loop_stack.items.len == 0) return error.InvalidJump;
+                const labels = self.loop_stack.items[self.loop_stack.items.len - 1];
+                try self.emit("  jmp L{d}\n", .{labels.continue_label});
+            },
             .return_stmt => |ret| {
                 if (ret) |expr| {
                     try self.genExpr(expr);
@@ -312,7 +333,10 @@ pub const Codegen = struct {
                 }
 
                 const start_label = self.newLabel();
+                const incr_label = self.newLabel();
                 const end_label = self.newLabel();
+
+                try self.loop_stack.append(self.allocator, .{ .continue_label = incr_label, .break_label = end_label });
 
                 try self.emit("L{d}:\n", .{start_label});
 
@@ -324,6 +348,7 @@ pub const Codegen = struct {
 
                 try self.genStmt(for_s.body.*);
 
+                try self.emit("L{d}:\n", .{incr_label});
                 if (for_s.increment) |incr| {
                     try self.genStmt(incr.*);
                 }
@@ -331,6 +356,7 @@ pub const Codegen = struct {
                 try self.emit("  jmp L{d}\n", .{start_label});
                 try self.emit("L{d}:\n", .{end_label});
 
+                _ = self.loop_stack.pop();
                 self.leaveScope();
             },
             .struct_decl => |s| {
@@ -851,4 +877,30 @@ test "codegen structs" {
     // Check for field access (offset calculation)
     // y is at offset 8 (second field)
     try std.testing.expect(std.mem.indexOf(u8, code, "sub $8, %rax") != null);
+}
+
+test "codegen break continue" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dummy_loc = @import("lexer.zig").Token.Loc{ .line = 0, .col = 0, .start = 0, .end = 0 };
+
+    // while (true) { break; }
+    const true_expr = try allocator.create(Ast.Expr);
+    true_expr.* = Ast.Expr{ .loc = dummy_loc, .data = .{ .boolean = true } };
+    const break_stmt = Ast.Stmt{ .loc = dummy_loc, .data = .break_stmt };
+    const body = try allocator.create(Ast.Stmt);
+    body.* = Ast.Stmt{ .loc = dummy_loc, .data = .{ .block = &[_]Ast.Stmt{break_stmt} } };
+    const while_stmt = Ast.Stmt{ .loc = dummy_loc, .data = .{ .while_stmt = .{ .condition = true_expr, .body = body } } };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{while_stmt} };
+
+    var codegen = try Codegen.init(allocator);
+    defer codegen.deinit();
+
+    const code = try codegen.generate(program);
+    defer allocator.free(code);
+
+    // Check for jump
+    try std.testing.expect(std.mem.indexOf(u8, code, "jmp L") != null);
 }

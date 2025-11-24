@@ -70,6 +70,10 @@ pub const Parser = struct {
             return self.parseStructDecl();
         } else if (self.current_token.tag == .keyword_return) {
             return self.parseReturnStmt();
+        } else if (self.current_token.tag == .keyword_break) {
+            return self.parseBreakStmt();
+        } else if (self.current_token.tag == .keyword_continue) {
+            return self.parseContinueStmt();
         } else if (self.current_token.tag == .l_brace) {
             return self.parseBlock();
         } else if (self.current_token.tag == .identifier) {
@@ -194,6 +198,20 @@ pub const Parser = struct {
         }
         try self.eat(.semicolon);
         return Ast.Stmt{ .loc = start_loc, .data = .{ .return_stmt = value } };
+    }
+
+    fn parseBreakStmt(self: *Parser) ParseError!Ast.Stmt {
+        const start_loc = self.current_token.loc;
+        try self.eat(.keyword_break);
+        try self.eat(.semicolon);
+        return Ast.Stmt{ .loc = start_loc, .data = .break_stmt };
+    }
+
+    fn parseContinueStmt(self: *Parser) ParseError!Ast.Stmt {
+        const start_loc = self.current_token.loc;
+        try self.eat(.keyword_continue);
+        try self.eat(.semicolon);
+        return Ast.Stmt{ .loc = start_loc, .data = .continue_stmt };
     }
 
     fn parseBlock(self: *Parser) ParseError!Ast.Stmt {
@@ -964,6 +982,38 @@ test "parser explicit types" {
             try std.testing.expectEqualStrings("b", f.params[1].name);
             try std.testing.expectEqual(Ast.Type.int, f.params[1].type);
             try std.testing.expectEqual(Ast.Type.int, f.return_type);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "parser break continue" {
+    const source =
+        \\while (true) {
+        \\    break;
+        \\    continue;
+        \\}
+    ;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+
+    try std.testing.expectEqual(@as(usize, 1), program.statements.len);
+    const stmt = program.statements[0];
+    switch (stmt.data) {
+        .while_stmt => |w| {
+            switch (w.body.data) {
+                .block => |stmts| {
+                    try std.testing.expectEqual(@as(usize, 2), stmts.len);
+                    try std.testing.expect(stmts[0].data == .break_stmt);
+                    try std.testing.expect(stmts[1].data == .continue_stmt);
+                },
+                else => return error.TestUnexpectedResult,
+            }
         },
         else => return error.TestUnexpectedResult,
     }

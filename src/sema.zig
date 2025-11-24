@@ -48,6 +48,7 @@ pub const Sema = struct {
     structs: std.StringHashMap(StructDef),
     current_return_type: ?Ast.Type,
     diagnostics: *Diagnostics,
+    loop_depth: usize,
 
     pub fn init(allocator: std.mem.Allocator, diagnostics: *Diagnostics) !Sema {
         const root = try allocator.create(Scope);
@@ -58,6 +59,7 @@ pub const Sema = struct {
             .structs = std.StringHashMap(StructDef).init(allocator),
             .current_return_type = null,
             .diagnostics = diagnostics,
+            .loop_depth = 0,
         };
     }
 
@@ -196,7 +198,9 @@ pub const Sema = struct {
                     try self.diagnostics.addError(while_s.condition.loc, "While condition must be a boolean", .{});
                     return error.SemanticError;
                 }
+                self.loop_depth += 1;
                 try self.analyzeStmt(while_s.body.*);
+                self.loop_depth -= 1;
             },
             .fn_decl => |func| {
                 try self.current_scope.put(func.name, .void);
@@ -228,6 +232,12 @@ pub const Sema = struct {
                     }
                 }
             },
+            .break_stmt, .continue_stmt => {
+                if (self.loop_depth == 0) {
+                    try self.diagnostics.addError(stmt.loc, "Break/Continue statement must be inside a loop", .{});
+                    return error.SemanticError;
+                }
+            },
             .for_stmt => |for_s| {
                 try self.enterScope();
                 if (for_s.init) |init_s| {
@@ -243,7 +253,9 @@ pub const Sema = struct {
                 if (for_s.increment) |incr| {
                     try self.analyzeStmt(incr.*);
                 }
+                self.loop_depth += 1;
                 try self.analyzeStmt(for_s.body.*);
+                self.loop_depth -= 1;
                 self.leaveScope();
             },
         }

@@ -131,6 +131,8 @@ pub const StmtData = union(enum) {
         body: *Stmt,
     },
     return_stmt: ?*Expr,
+    break_stmt: void,
+    continue_stmt: void,
 };
 
 pub const Program = struct {
