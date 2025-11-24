@@ -1,6 +1,6 @@
 # Mini Compiler in Zig
 
-A simple compiler for a custom programming language ("Mini") written in Zig. This project demonstrates the core stages of a compiler: Lexing, Parsing, Semantic Analysis, and Code Generation (x86-64 Assembly).
+A simple compiler for a custom programming language ("Mini") written in Zig. This project demonstrates the core stages of a compiler: Lexing, Parsing, Semantic Analysis, and Code Generation (LLVM IR).
 
 ## Features
 
@@ -32,7 +32,7 @@ The compiler is structured into five main components:
 1.  **Lexer (`src/lexer.zig`)**: Tokenizes the source code into a stream of tokens (keywords, identifiers, literals, operators).
 2.  **Parser (`src/parser.zig`)**: Consumes tokens to build an Abstract Syntax Tree (AST) representing the program structure. Implements operator precedence.
 3.  **Semantic Analysis (`src/sema.zig`)**: Traverses the AST to check for errors (undefined variables, type mismatches, scope resolution).
-4.  **Code Generation (`src/codegen.zig`)**: Traverses the AST to generate x86-64 assembly code (AT&T syntax).
+4.  **Code Generation (`src/llvm_codegen.zig`)**: Traverses the AST to generate LLVM IR code.
 5.  **Diagnostics (`src/diagnostics.zig`)**: Handles error reporting with colored output and source context.
 
 ## Building and Running
@@ -165,7 +165,7 @@ error: undefined variable 'z'
 ## Implementation Details
 
 - **Memory Management**: Uses Zig's `ArenaAllocator` for efficient memory management during compilation.
-- **Codegen**: Generates a `.s` assembly file and a `runtime.c` file (for `printf`), then invokes the system C compiler (`cc`) to link them into a final executable.
+- **Codegen**: Generates a `.ll` LLVM IR file and a `runtime.c` file (for `printf`), then invokes the system C compiler (`cc`) to compile and link them into a final executable.
 - **Scopes**: Supports nested scopes for variables (block scoping).
 
 ## License

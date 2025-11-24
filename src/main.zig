@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
 const Sema = @import("sema.zig").Sema;
-const Codegen = @import("codegen.zig").Codegen;
+const LLVMCodegen = @import("llvm_codegen.zig").LLVMCodegen;
 const Diagnostics = @import("diagnostics.zig").Diagnostics;
 
 const runtime_c =
@@ -67,7 +67,7 @@ pub fn main() !void {
     }
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     // defer codegen.deinit(); // Arena handles it
     const code = codegen.generate(program) catch |err| {
         std.debug.print("Codegen error: {}\n", .{err});
@@ -79,8 +79,8 @@ pub fn main() !void {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -99,7 +99,7 @@ pub fn main() !void {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -133,7 +133,7 @@ test {
     _ = Lexer;
     _ = Parser;
     _ = Sema;
-    _ = Codegen;
+    _ = LLVMCodegen;
 }
 
 test "integration control flow" {
@@ -171,7 +171,7 @@ test "integration control flow" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -179,8 +179,8 @@ test "integration control flow" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -198,7 +198,7 @@ test "integration control flow" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -261,7 +261,7 @@ test "integration functions" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -269,8 +269,8 @@ test "integration functions" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -288,7 +288,7 @@ test "integration functions" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -340,7 +340,7 @@ test "integration strings" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -348,8 +348,8 @@ test "integration strings" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -367,7 +367,7 @@ test "integration strings" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -428,7 +428,7 @@ test "integration booleans" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -436,8 +436,8 @@ test "integration booleans" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -455,7 +455,7 @@ test "integration booleans" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -511,7 +511,7 @@ test "integration unary" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -519,8 +519,8 @@ test "integration unary" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -538,7 +538,7 @@ test "integration unary" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -593,7 +593,7 @@ test "integration for loop" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -601,8 +601,8 @@ test "integration for loop" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -620,7 +620,7 @@ test "integration for loop" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -681,7 +681,7 @@ test "integration arrays" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -689,8 +689,8 @@ test "integration arrays" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -708,7 +708,7 @@ test "integration arrays" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
@@ -764,7 +764,7 @@ test "integration structs" {
     try sema.analyze(program);
 
     // Codegen
-    var codegen = try Codegen.init(allocator);
+    var codegen = try LLVMCodegen.init(allocator);
     const code = try codegen.generate(program);
 
     // Prepare output directory
@@ -772,8 +772,8 @@ test "integration structs" {
     try std.fs.cwd().makePath(out_dir_name);
     const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
 
-    // Write assembly
-    try out_dir.writeFile(.{ .sub_path = "out.s", .data = code });
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
 
     // Write runtime
     try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
@@ -791,7 +791,7 @@ test "integration structs" {
 
     try cc_args.append(allocator, "-o");
     try cc_args.append(allocator, out_exe);
-    try cc_args.append(allocator, "out.s");
+    try cc_args.append(allocator, "out.ll");
     try cc_args.append(allocator, "runtime.c");
 
     const compile_result = try std.process.Child.run(.{
