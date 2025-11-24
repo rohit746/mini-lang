@@ -1,0 +1,22 @@
+let s = "hello world";
+print(s);
+print("direct string");
+
+let t = true;
+let f = false;
+print(t);
+print(f);
+
+if (t && t) { print(1); } else { print(0); }
+if (t || f) { print(1); } else { print(0); }
+if (f && t) { print(1); } else { print(0); }
+
+let x = 10;
+let neg_x = -x;
+print(neg_x);
+
+let not_t = !t;
+print(not_t);
+
+if (!f) { print(1); } else { print(0); }
+
