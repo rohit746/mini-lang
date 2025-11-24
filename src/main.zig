@@ -209,11 +209,11 @@ test "integration functions" {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const source =
-        \\fn add(a, b) {
+        \\fn add(a: int, b: int) -> int {
         \\    return a + b;
         \\}
         \\
-        \\fn fib(n) {
+        \\fn fib(n: int) -> int {
         \\    if (n < 2) {
         \\        return n;
         \\    }
@@ -702,7 +702,7 @@ test "integration structs" {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const source =
-        \\struct Point { x, y }
+        \\struct Point { x: int, y: int }
         \\let p = Point { x: 10, y: 20 };
         \\print(p.x);
         \\print(p.y);

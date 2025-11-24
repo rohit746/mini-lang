@@ -44,6 +44,7 @@ pub const Sema = struct {
     allocator: std.mem.Allocator,
     current_scope: *Scope,
     structs: std.StringHashMap(StructDef),
+    current_return_type: ?Ast.Type,
 
     pub fn init(allocator: std.mem.Allocator) !Sema {
         const root = try allocator.create(Scope);
@@ -52,6 +53,7 @@ pub const Sema = struct {
             .allocator = allocator,
             .current_scope = root,
             .structs = std.StringHashMap(StructDef).init(allocator),
+            .current_return_type = null,
         };
     }
 
@@ -109,16 +111,17 @@ pub const Sema = struct {
         switch (stmt) {
             .let => |decl| {
                 const type_info = try self.analyzeExpr(decl.value);
+                if (decl.type) |explicit_type| {
+                    if (!self.typesEqual(explicit_type, type_info)) {
+                        return error.TypeMismatch;
+                    }
+                }
                 try self.current_scope.put(decl.name, type_info);
             },
             .assign => |assign| {
                 const type_info = try self.analyzeExpr(assign.value);
                 if (self.current_scope.get(assign.name)) |info| {
                     if (!self.typesEqual(info.type, type_info)) {
-                        // For now, strict type checking on assignment?
-                        // Or allow int <-> string? No.
-                        // But we might have unknown types if we had them.
-                        // For now, let's enforce it.
                         return error.TypeMismatch;
                     }
                 } else {
@@ -139,10 +142,12 @@ pub const Sema = struct {
             },
             .struct_decl => |s| {
                 var fields = std.StringHashMap(Ast.Type).init(self.allocator);
-                for (s.fields) |field_name| {
-                    try fields.put(field_name, .int); // Default to int for now
+                const order = try self.allocator.alloc([]const u8, s.fields.len);
+                for (s.fields, 0..) |field, i| {
+                    try fields.put(field.name, field.type);
+                    order[i] = field.name;
                 }
-                try self.structs.put(s.name, .{ .fields = fields, .field_order = s.fields });
+                try self.structs.put(s.name, .{ .fields = fields, .field_order = order });
             },
             .print => |expr| {
                 _ = try self.analyzeExpr(expr);
@@ -168,25 +173,39 @@ pub const Sema = struct {
                 try self.analyzeStmt(while_s.body.*);
             },
             .fn_decl => |func| {
-                // Register function name in current scope (usually global)
-                try self.current_scope.put(func.name, .void); // Functions are void for now (or we could have a function type)
+                // Register function name in current scope
+                try self.current_scope.put(func.name, .void);
 
                 // Enter new scope for function body
                 try self.enterScope();
 
                 // Add parameters to scope
                 for (func.params) |param| {
-                    try self.current_scope.put(param, .int); // Assume int for parameters
+                    try self.current_scope.put(param.name, param.type);
                 }
+
+                // Set expected return type
+                const prev_return_type = self.current_return_type;
+                self.current_return_type = func.return_type;
 
                 // Analyze body
                 try self.analyzeStmt(func.body.*);
+
+                // Restore return type
+                self.current_return_type = prev_return_type;
 
                 self.leaveScope();
             },
             .return_stmt => |ret| {
                 if (ret) |expr| {
-                    _ = try self.analyzeExpr(expr);
+                    const type_info = try self.analyzeExpr(expr);
+                    if (self.current_return_type) |expected| {
+                        if (!self.typesEqual(expected, type_info)) return error.TypeMismatch;
+                    }
+                } else {
+                    if (self.current_return_type) |expected| {
+                        if (expected != .void) return error.TypeMismatch;
+                    }
                 }
             },
             .for_stmt => |for_s| {
@@ -324,7 +343,7 @@ test "sema basic" {
     // let x = 10;
     const val = try allocator.create(Ast.Expr);
     val.* = Ast.Expr{ .number = 10 };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .value = val } };
+    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
 
     // print(x);
     const ref = try allocator.create(Ast.Expr);
@@ -365,12 +384,12 @@ test "sema scopes" {
     // let x = 10;
     const val = try allocator.create(Ast.Expr);
     val.* = Ast.Expr{ .number = 10 };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .value = val } };
+    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
 
     // { let y = 20; print(x); print(y); }
     const val2 = try allocator.create(Ast.Expr);
     val2.* = Ast.Expr{ .number = 20 };
-    const stmt_inner_let = Ast.Stmt{ .let = .{ .name = "y", .value = val2 } };
+    const stmt_inner_let = Ast.Stmt{ .let = .{ .name = "y", .type = null, .value = val2 } };
 
     const ref_x = try allocator.create(Ast.Expr);
     ref_x.* = Ast.Expr{ .identifier = "x" };
@@ -412,7 +431,7 @@ test "sema type mismatch" {
     // let x = "hello";
     const val = try allocator.create(Ast.Expr);
     val.* = Ast.Expr{ .string = "hello" };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .value = val } };
+    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
 
     // x + 1
     const ref_x = try allocator.create(Ast.Expr);
@@ -442,7 +461,7 @@ test "sema for loop" {
     const val_0 = try allocator.create(Ast.Expr);
     val_0.* = Ast.Expr{ .number = 0 };
     const init_stmt = try allocator.create(Ast.Stmt);
-    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .value = val_0 } };
+    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .type = null, .value = val_0 } };
 
     // Cond: i < 10
     const ref_i = try allocator.create(Ast.Expr);
@@ -498,7 +517,7 @@ test "sema arrays" {
     elements[1] = two;
     const array_lit = try allocator.create(Ast.Expr);
     array_lit.* = Ast.Expr{ .array_literal = elements };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "a", .value = array_lit } };
+    const stmt1 = Ast.Stmt{ .let = .{ .name = "a", .type = null, .value = array_lit } };
 
     // a[0] = 10;
     const zero = try allocator.create(Ast.Expr);
@@ -529,10 +548,10 @@ test "sema structs" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // struct Point { x, y }
-    const fields = try allocator.alloc([]const u8, 2);
-    fields[0] = "x";
-    fields[1] = "y";
+    // struct Point { x: int, y: int }
+    const fields = try allocator.alloc(Ast.StructField, 2);
+    fields[0] = .{ .name = "x", .type = .int };
+    fields[1] = .{ .name = "y", .type = .int };
     const stmt1 = Ast.Stmt{ .struct_decl = .{ .name = "Point", .fields = fields } };
 
     // let p = Point { x: 1, y: 2 };
@@ -545,7 +564,7 @@ test "sema structs" {
     struct_fields[1] = .{ .name = "y", .value = two };
     const struct_lit = try allocator.create(Ast.Expr);
     struct_lit.* = Ast.Expr{ .struct_literal = .{ .struct_name = "Point", .fields = struct_fields } };
-    const stmt2 = Ast.Stmt{ .let = .{ .name = "p", .value = struct_lit } };
+    const stmt2 = Ast.Stmt{ .let = .{ .name = "p", .type = null, .value = struct_lit } };
 
     // print(p.x);
     const ref_p = try allocator.create(Ast.Expr);

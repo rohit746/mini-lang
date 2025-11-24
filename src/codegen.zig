@@ -273,7 +273,7 @@ pub const Codegen = struct {
                 for (func.params, 0..) |param, i| {
                     if (i < registers.len) {
                         self.stack_offset += 8;
-                        try self.current_scope.put(param, self.stack_offset, .int); // Assume int for params
+                        try self.current_scope.put(param.name, self.stack_offset, param.type);
                         try self.emit("  mov {s}, -{d}(%rbp)\n", .{ registers[i], self.stack_offset });
                     } else {
                         // Stack arguments not supported yet
@@ -334,7 +334,11 @@ pub const Codegen = struct {
                 self.leaveScope();
             },
             .struct_decl => |s| {
-                try self.structs.put(s.name, .{ .field_order = s.fields });
+                const order = try self.allocator.alloc([]const u8, s.fields.len);
+                for (s.fields, 0..) |field, i| {
+                    order[i] = field.name;
+                }
+                try self.structs.put(s.name, .{ .field_order = order });
             },
         }
     }
@@ -563,7 +567,7 @@ test "codegen basic" {
     // let x = 10;
     const val = try allocator.create(Ast.Expr);
     val.* = Ast.Expr{ .number = 10 };
-    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .value = val } };
+    const stmt1 = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = val } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{stmt1} };
 
@@ -597,7 +601,10 @@ test "codegen function" {
     const body_stmt = try allocator.create(Ast.Stmt);
     body_stmt.* = Ast.Stmt{ .block = &[_]Ast.Stmt{ret_stmt} };
 
-    const fn_decl = Ast.Stmt{ .fn_decl = .{ .name = "add", .params = &[_][]const u8{ "a", "b" }, .body = body_stmt } };
+    const params = try allocator.alloc(Ast.FnParam, 2);
+    params[0] = .{ .name = "a", .type = .int };
+    params[1] = .{ .name = "b", .type = .int };
+    const fn_decl = Ast.Stmt{ .fn_decl = .{ .name = "add", .params = params, .return_type = .int, .body = body_stmt } };
 
     // add(10, 20)
     const arg1 = try allocator.create(Ast.Expr);
@@ -608,7 +615,7 @@ test "codegen function" {
     const call_expr = try allocator.create(Ast.Expr);
     call_expr.* = Ast.Expr{ .call = .{ .callee = "add", .args = &[_]*Ast.Expr{ arg1, arg2 } } };
 
-    const let_stmt = Ast.Stmt{ .let = .{ .name = "x", .value = call_expr } };
+    const let_stmt = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = call_expr } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ fn_decl, let_stmt } };
 
@@ -641,13 +648,13 @@ test "codegen unary" {
     ten.* = Ast.Expr{ .number = 10 };
     const neg_ten = try allocator.create(Ast.Expr);
     neg_ten.* = Ast.Expr{ .unary = .{ .op = .minus, .right = ten } };
-    const let_x = Ast.Stmt{ .let = .{ .name = "x", .value = neg_ten } };
+    const let_x = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = neg_ten } };
 
     const true_expr = try allocator.create(Ast.Expr);
     true_expr.* = Ast.Expr{ .boolean = true };
     const not_true = try allocator.create(Ast.Expr);
     not_true.* = Ast.Expr{ .unary = .{ .op = .bang, .right = true_expr } };
-    const let_y = Ast.Stmt{ .let = .{ .name = "y", .value = not_true } };
+    const let_y = Ast.Stmt{ .let = .{ .name = "y", .type = null, .value = not_true } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ let_x, let_y } };
 
@@ -674,7 +681,7 @@ test "codegen for loop" {
     const val_0 = try allocator.create(Ast.Expr);
     val_0.* = Ast.Expr{ .number = 0 };
     const init_stmt = try allocator.create(Ast.Stmt);
-    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .value = val_0 } };
+    init_stmt.* = Ast.Stmt{ .let = .{ .name = "i", .type = null, .value = val_0 } };
 
     // Cond: i < 10
     const ref_i = try allocator.create(Ast.Expr);
@@ -745,7 +752,7 @@ test "codegen arrays" {
     const array_lit = try allocator.create(Ast.Expr);
     array_lit.* = Ast.Expr{ .array_literal = &[_]*Ast.Expr{ one, two, three } };
 
-    const let_arr = Ast.Stmt{ .let = .{ .name = "arr", .value = array_lit } };
+    const let_arr = Ast.Stmt{ .let = .{ .name = "arr", .type = null, .value = array_lit } };
 
     // let x = arr[1];
     const arr_ref = try allocator.create(Ast.Expr);
@@ -756,7 +763,7 @@ test "codegen arrays" {
     const index_expr = try allocator.create(Ast.Expr);
     index_expr.* = Ast.Expr{ .index = .{ .callee = arr_ref, .index = idx_1 } };
 
-    const let_x = Ast.Stmt{ .let = .{ .name = "x", .value = index_expr } };
+    const let_x = Ast.Stmt{ .let = .{ .name = "x", .type = null, .value = index_expr } };
 
     // arr[2] = 42;
     const arr_ref_2 = try allocator.create(Ast.Expr);
@@ -799,9 +806,9 @@ test "codegen structs" {
     const allocator = arena.allocator();
 
     // struct Point { x, y }
-    const fields = try allocator.alloc([]const u8, 2);
-    fields[0] = "x";
-    fields[1] = "y";
+    const fields = try allocator.alloc(Ast.StructField, 2);
+    fields[0] = .{ .name = "x", .type = .int };
+    fields[1] = .{ .name = "y", .type = .int };
     const stmt1 = Ast.Stmt{ .struct_decl = .{ .name = "Point", .fields = fields } };
 
     // let p = Point { x: 1, y: 2 };
@@ -814,14 +821,14 @@ test "codegen structs" {
     struct_fields[1] = .{ .name = "y", .value = two };
     const struct_lit = try allocator.create(Ast.Expr);
     struct_lit.* = Ast.Expr{ .struct_literal = .{ .struct_name = "Point", .fields = struct_fields } };
-    const stmt2 = Ast.Stmt{ .let = .{ .name = "p", .value = struct_lit } };
+    const stmt2 = Ast.Stmt{ .let = .{ .name = "p", .type = null, .value = struct_lit } };
 
     // let val = p.y;
     const ref_p = try allocator.create(Ast.Expr);
     ref_p.* = Ast.Expr{ .identifier = "p" };
     const field_access = try allocator.create(Ast.Expr);
     field_access.* = Ast.Expr{ .field_access = .{ .object = ref_p, .field = "y" } };
-    const stmt3 = Ast.Stmt{ .let = .{ .name = "val", .value = field_access } };
+    const stmt3 = Ast.Stmt{ .let = .{ .name = "val", .type = null, .value = field_access } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2, stmt3 } };
 

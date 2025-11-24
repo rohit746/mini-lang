@@ -127,15 +127,19 @@ pub const Parser = struct {
         self.advance();
 
         try self.eat(.l_paren);
-        var params = std.ArrayListUnmanaged([]const u8){};
+        var params = std.ArrayListUnmanaged(Ast.FnParam){};
         errdefer params.deinit(self.allocator);
 
         if (self.current_token.tag != .r_paren) {
             while (true) {
                 if (self.current_token.tag != .identifier) return error.ExpectedIdentifier;
                 const param_name = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
-                try params.append(self.allocator, param_name);
                 self.advance();
+
+                try self.eat(.colon);
+                const param_type = try self.parseType();
+
+                try params.append(self.allocator, .{ .name = param_name, .type = param_type });
 
                 if (self.current_token.tag == .comma) {
                     self.advance();
@@ -146,10 +150,16 @@ pub const Parser = struct {
         }
         try self.eat(.r_paren);
 
+        var return_type: Ast.Type = .void;
+        if (self.current_token.tag == .arrow) {
+            self.advance();
+            return_type = try self.parseType();
+        }
+
         const body = try self.allocator.create(Ast.Stmt);
         body.* = try self.parseBlock();
 
-        return Ast.Stmt{ .fn_decl = .{ .name = name, .params = try params.toOwnedSlice(self.allocator), .body = body } };
+        return Ast.Stmt{ .fn_decl = .{ .name = name, .params = try params.toOwnedSlice(self.allocator), .return_type = return_type, .body = body } };
     }
 
     fn parseReturnStmt(self: *Parser) ParseError!Ast.Stmt {
@@ -262,6 +272,25 @@ pub const Parser = struct {
         return Ast.Stmt{ .assign = .{ .name = name, .value = value } };
     }
 
+    fn parseType(self: *Parser) ParseError!Ast.Type {
+        if (self.current_token.tag == .identifier) {
+            const name = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
+            self.advance();
+            if (std.mem.eql(u8, name, "int")) return .int;
+            if (std.mem.eql(u8, name, "string")) return .string;
+            if (std.mem.eql(u8, name, "bool")) return .bool;
+            if (std.mem.eql(u8, name, "void")) return .void;
+            return Ast.Type{ .struct_type = name };
+        } else if (self.current_token.tag == .l_bracket) {
+            self.advance(); // [
+            try self.eat(.r_bracket); // ]
+            const elem_type = try self.parseType();
+            if (elem_type == .int) return .array_int;
+            return error.UnexpectedToken;
+        }
+        return error.UnexpectedToken;
+    }
+
     fn parseVarDecl(self: *Parser) ParseError!Ast.Stmt {
         try self.eat(.keyword_let);
 
@@ -269,11 +298,17 @@ pub const Parser = struct {
         const name = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
         self.advance();
 
+        var type_annotation: ?Ast.Type = null;
+        if (self.current_token.tag == .colon) {
+            self.advance();
+            type_annotation = try self.parseType();
+        }
+
         try self.eat(.equal);
         const value = try self.parseExpression();
         try self.eat(.semicolon);
 
-        return Ast.Stmt{ .let = .{ .name = name, .value = value } };
+        return Ast.Stmt{ .let = .{ .name = name, .type = type_annotation, .value = value } };
     }
 
     fn parsePrintStmt(self: *Parser) ParseError!Ast.Stmt {
@@ -552,15 +587,19 @@ pub const Parser = struct {
         self.advance();
 
         try self.eat(.l_brace);
-        var fields = std.ArrayListUnmanaged([]const u8){};
+        var fields = std.ArrayListUnmanaged(Ast.StructField){};
         errdefer fields.deinit(self.allocator);
 
         if (self.current_token.tag != .r_brace) {
             while (true) {
                 if (self.current_token.tag != .identifier) return error.ExpectedIdentifier;
                 const field_name = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
-                try fields.append(self.allocator, field_name);
                 self.advance();
+
+                try self.eat(.colon);
+                const field_type = try self.parseType();
+
+                try fields.append(self.allocator, .{ .name = field_name, .type = field_type });
 
                 if (self.current_token.tag == .comma) {
                     self.advance();
@@ -780,7 +819,7 @@ test "parser arrays" {
 
 test "parser structs" {
     const source =
-        \\struct Point { x, y }
+        \\struct Point { x: int, y: int }
         \\let p = Point { x: 1, y: 2 };
         \\print(p.x);
     ;
@@ -794,14 +833,16 @@ test "parser structs" {
 
     try std.testing.expectEqual(@as(usize, 3), program.statements.len);
 
-    // struct Point { x, y }
+    // struct Point { x: int, y: int }
     const stmt1 = program.statements[0];
     switch (stmt1) {
         .struct_decl => |s| {
             try std.testing.expectEqualStrings("Point", s.name);
             try std.testing.expectEqual(@as(usize, 2), s.fields.len);
-            try std.testing.expectEqualStrings("x", s.fields[0]);
-            try std.testing.expectEqualStrings("y", s.fields[1]);
+            try std.testing.expectEqualStrings("x", s.fields[0].name);
+            try std.testing.expectEqual(Ast.Type.int, s.fields[0].type);
+            try std.testing.expectEqualStrings("y", s.fields[1].name);
+            try std.testing.expectEqual(Ast.Type.int, s.fields[1].type);
         },
         else => return error.TestUnexpectedResult,
     }
@@ -838,6 +879,49 @@ test "parser structs" {
                 },
                 else => return error.TestUnexpectedResult,
             }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "parser explicit types" {
+    const source =
+        \\let x: int = 10;
+        \\fn add(a: int, b: int) -> int {
+        \\    return a + b;
+        \\}
+    ;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+
+    try std.testing.expectEqual(@as(usize, 2), program.statements.len);
+
+    // let x: int = 10;
+    const stmt1 = program.statements[0];
+    switch (stmt1) {
+        .let => |l| {
+            try std.testing.expectEqualStrings("x", l.name);
+            try std.testing.expectEqual(Ast.Type.int, l.type.?);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    // fn add(a: int, b: int) -> int { ... }
+    const stmt2 = program.statements[1];
+    switch (stmt2) {
+        .fn_decl => |f| {
+            try std.testing.expectEqualStrings("add", f.name);
+            try std.testing.expectEqual(@as(usize, 2), f.params.len);
+            try std.testing.expectEqualStrings("a", f.params[0].name);
+            try std.testing.expectEqual(Ast.Type.int, f.params[0].type);
+            try std.testing.expectEqualStrings("b", f.params[1].name);
+            try std.testing.expectEqual(Ast.Type.int, f.params[1].type);
+            try std.testing.expectEqual(Ast.Type.int, f.return_type);
         },
         else => return error.TestUnexpectedResult,
     }

@@ -58,9 +58,29 @@ pub const StructFieldInit = struct {
     value: *Expr,
 };
 
+pub const Type = union(enum) {
+    int,
+    string,
+    bool,
+    void,
+    array_int,
+    struct_type: []const u8,
+};
+
+pub const StructField = struct {
+    name: []const u8,
+    type: Type,
+};
+
+pub const FnParam = struct {
+    name: []const u8,
+    type: Type,
+};
+
 pub const Stmt = union(enum) {
     let: struct {
         name: []const u8,
+        type: ?Type,
         value: *Expr,
     },
     assign: struct {
@@ -74,7 +94,7 @@ pub const Stmt = union(enum) {
     },
     struct_decl: struct {
         name: []const u8,
-        fields: []const []const u8,
+        fields: []const StructField,
     },
     print: *Expr,
     block: []const Stmt,
@@ -95,19 +115,11 @@ pub const Stmt = union(enum) {
     },
     fn_decl: struct {
         name: []const u8,
-        params: []const []const u8,
+        params: []const FnParam,
+        return_type: Type,
         body: *Stmt,
     },
     return_stmt: ?*Expr,
-};
-
-pub const Type = union(enum) {
-    int,
-    string,
-    bool,
-    void,
-    array_int,
-    struct_type: []const u8,
 };
 
 pub const Program = struct {
