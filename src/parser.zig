@@ -324,6 +324,7 @@ pub const Parser = struct {
             const name = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
             self.advance();
             if (std.mem.eql(u8, name, "int")) return .int;
+            if (std.mem.eql(u8, name, "float")) return .float;
             if (std.mem.eql(u8, name, "string")) return .string;
             if (std.mem.eql(u8, name, "bool")) return .bool;
             if (std.mem.eql(u8, name, "void")) return .void;
@@ -505,6 +506,13 @@ pub const Parser = struct {
             self.advance();
             const node = try self.allocator.create(Ast.Expr);
             node.* = Ast.Expr{ .loc = start_loc, .data = .{ .number = num } };
+            expr = node;
+        } else if (self.current_token.tag == .float_literal) {
+            const text = self.lexer.source[self.current_token.loc.start..self.current_token.loc.end];
+            const num = try std.fmt.parseFloat(f64, text);
+            self.advance();
+            const node = try self.allocator.create(Ast.Expr);
+            node.* = Ast.Expr{ .loc = start_loc, .data = .{ .float = num } };
             expr = node;
         } else if (self.current_token.tag == .string_literal) {
             // Strip quotes
@@ -1012,6 +1020,45 @@ test "parser break continue" {
                     try std.testing.expect(stmts[0].data == .break_stmt);
                     try std.testing.expect(stmts[1].data == .continue_stmt);
                 },
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "parser floats" {
+    const source = "let pi = 3.14; let x: float = 1.0;";
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+
+    try std.testing.expectEqual(@as(usize, 2), program.statements.len);
+
+    // let pi = 3.14;
+    const stmt1 = program.statements[0];
+    switch (stmt1.data) {
+        .let => |l| {
+            try std.testing.expectEqualStrings("pi", l.name);
+            switch (l.value.data) {
+                .float => |f| try std.testing.expectApproxEqAbs(@as(f64, 3.14), f, 0.0001),
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    // let x: float = 1.0;
+    const stmt2 = program.statements[1];
+    switch (stmt2.data) {
+        .let => |l| {
+            try std.testing.expectEqualStrings("x", l.name);
+            try std.testing.expectEqual(Ast.Type.float, l.type.?);
+            switch (l.value.data) {
+                .float => |f| try std.testing.expectApproxEqAbs(@as(f64, 1.0), f, 0.0001),
                 else => return error.TestUnexpectedResult,
             }
         },

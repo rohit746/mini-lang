@@ -55,6 +55,7 @@ pub const Token = struct {
         colon,
         arrow,
         string_literal,
+        float_literal,
     };
 };
 
@@ -127,6 +128,19 @@ pub const Lexer = struct {
                     const digit = self.source[self.index];
                     if (!std.ascii.isDigit(digit)) break;
                     self.advanceChar();
+                }
+                // Check for fractional part
+                if (self.index < self.source.len and self.source[self.index] == '.') {
+                    // Lookahead to ensure it's a float and not a method call or property access
+                    if (self.index + 1 < self.source.len and std.ascii.isDigit(self.source[self.index + 1])) {
+                        self.advanceChar(); // Consume '.'
+                        while (self.index < self.source.len) {
+                            const digit = self.source[self.index];
+                            if (!std.ascii.isDigit(digit)) break;
+                            self.advanceChar();
+                        }
+                        return .{ .tag = .float_literal, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
+                    }
                 }
                 return .{ .tag = .number_literal, .loc = .{ .start = start, .end = self.index, .line = start_line, .col = start_col } };
             },
@@ -384,6 +398,30 @@ test "lexer break continue" {
     try std.testing.expectEqual(Token.Tag.keyword_break, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.keyword_continue, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
+}
+
+test "lexer floats" {
+    const source = "let pi = 3.14; let x = 1.0; let y = 0.5;";
+    var lexer = Lexer.init(source);
+
+    try std.testing.expectEqual(Token.Tag.keyword_let, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.equal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.float_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+
+    try std.testing.expectEqual(Token.Tag.keyword_let, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.equal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.float_literal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
+
+    try std.testing.expectEqual(Token.Tag.keyword_let, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.identifier, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.equal, lexer.next().tag);
+    try std.testing.expectEqual(Token.Tag.float_literal, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.semicolon, lexer.next().tag);
     try std.testing.expectEqual(Token.Tag.eof, lexer.next().tag);
 }

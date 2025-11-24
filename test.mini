@@ -1,85 +1,57 @@
-// 1. Variables & Types
-let x: int = 10;
-let y: int = 20;
-let s: string = "Hello, Mini!";
-let t: bool = true;
-let f: bool = false;
+print("--- Basic Types ---");
+let x = 10;
+let pi = 3.14159;
+let s = "Hello Mini";
+let b = true;
 
-print(s);
 print(x);
+print(pi);
+print(s);
+print(b);
 
-// 2. Arithmetic
-let sum = x + y;
-let diff = y - x;
-let prod = x * 2;
-let quot = y / 2;
+print("--- Arithmetic ---");
+let sum = x + 20;
+print(sum);
+let area = pi * 2.0 * 2.0;
+print(area);
 
-print(sum);  // 30
-print(diff); // 10
-print(prod); // 20
-print(quot); // 10
-
-// 3. Logic & Unary
-if (t && !f) {
-    print(1); // Should print 1
-}
-
-let neg = -x;
-print(neg); // -10
-
-// 4. Control Flow
-if (x < y) {
-    print("x is smaller");
+print("--- Control Flow ---");
+if (x < 20) {
+    print("x is small");
 } else {
-    print("x is bigger");
+    print("x is big");
 }
 
-// While Loop
-let count = 3;
-while (count > 0) {
-    print(count);
-    count = count - 1;
-}
-
-// For Loop
-print("For Loop:");
-for (let i = 0; i < 3; i = i + 1) {
+let i = 0;
+while (i < 3) {
     print(i);
+    i = i + 1;
 }
 
-// 5. Arrays
-print("Arrays:");
-let arr = [100, 200, 300];
-print(arr[0]);
-print(arr[1]);
-print(arr[2]);
+for (let j = 0; j < 3; j = j + 1) {
+    print(j * 10);
+}
 
-arr[1] = 999;
-print(arr[1]); // 999
-
-// 6. Functions
+print("--- Functions ---");
 fn add(a: int, b: int) -> int {
     return a + b;
 }
+print(add(100, 200));
 
 fn fib(n: int) -> int {
-    if (n < 2) {
-        return n;
-    }
+    if (n < 2) return n;
     return fib(n - 1) + fib(n - 2);
 }
+print(fib(10));
 
-let res = add(x, y);
-print(res); // 30
+print("--- Arrays ---");
+let arr = [1, 2, 3];
+print(arr[0]);
+arr[0] = 100;
+print(arr[0]);
 
-let f6 = fib(6);
-print(f6); // 8
-
-// 7. Structs
-print("Structs:");
+print("--- Structs ---");
 struct Point { x: int, y: int }
 let p = Point { x: 10, y: 20 };
 print(p.x);
 print(p.y);
-
-

@@ -6,6 +6,7 @@ A simple compiler for a custom programming language ("Mini") written in Zig. Thi
 
 - **Data Types**:
   - Integers (`i64`)
+  - Floating Point Numbers (`f64`)
   - Booleans (`true`, `false`)
   - Strings (String literals)
   - Arrays (Integer arrays)
@@ -80,6 +81,7 @@ zig build test
 
 ```mini
 let x: int = 10;
+let pi: float = 3.14;
 let s: string = "hello";
 let b: bool = true;
 ```

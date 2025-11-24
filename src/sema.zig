@@ -264,6 +264,7 @@ pub const Sema = struct {
     fn analyzeExpr(self: *Sema, expr: *Ast.Expr) !Ast.Type {
         switch (expr.data) {
             .number => return .int,
+            .float => return .float,
             .boolean => return .bool,
             .string => return .string,
             .identifier => |name| {
@@ -280,11 +281,14 @@ pub const Sema = struct {
 
                 switch (bin.op) {
                     .add, .sub, .mul, .div => {
-                        if (!self.typesEqual(left, .int) or !self.typesEqual(right, .int)) {
-                            try self.diagnostics.addError(expr.loc, "Operands must be integers", .{});
-                            return error.SemanticError;
+                        if (self.typesEqual(left, .int) and self.typesEqual(right, .int)) {
+                            return .int;
                         }
-                        return .int;
+                        if (self.typesEqual(left, .float) and self.typesEqual(right, .float)) {
+                            return .float;
+                        }
+                        try self.diagnostics.addError(expr.loc, "Operands must be both integers or both floats", .{});
+                        return error.SemanticError;
                     },
                     .equal_equal, .bang_equal => {
                         if (!self.typesEqual(left, right)) {
@@ -294,11 +298,14 @@ pub const Sema = struct {
                         return .bool;
                     },
                     .less, .less_equal, .greater, .greater_equal => {
-                        if (!self.typesEqual(left, .int) or !self.typesEqual(right, .int)) {
-                            try self.diagnostics.addError(expr.loc, "Operands must be integers", .{});
-                            return error.SemanticError;
+                        if (self.typesEqual(left, .int) and self.typesEqual(right, .int)) {
+                            return .bool;
                         }
-                        return .bool;
+                        if (self.typesEqual(left, .float) and self.typesEqual(right, .float)) {
+                            return .bool;
+                        }
+                        try self.diagnostics.addError(expr.loc, "Operands must be both integers or both floats", .{});
+                        return error.SemanticError;
                     },
                     .logic_and, .logic_or => {
                         if (!self.typesEqual(left, .bool) or !self.typesEqual(right, .bool)) {
@@ -320,11 +327,10 @@ pub const Sema = struct {
                         return .bool;
                     },
                     .minus => {
-                        if (!self.typesEqual(right, .int)) {
-                            try self.diagnostics.addError(expr.loc, "Operand must be integer", .{});
-                            return error.SemanticError;
-                        }
-                        return .int;
+                        if (self.typesEqual(right, .int)) return .int;
+                        if (self.typesEqual(right, .float)) return .float;
+                        try self.diagnostics.addError(expr.loc, "Operand must be integer or float", .{});
+                        return error.SemanticError;
                     },
                 }
             },
@@ -506,6 +512,61 @@ test "sema undefined variable" {
     const ref = try allocator.create(Ast.Expr);
     ref.* = Ast.Expr{ .loc = undefined, .data = .{ .identifier = "y" } };
     const stmt = Ast.Stmt{ .loc = undefined, .data = .{ .print = ref } };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{stmt} };
+
+    var sema = try Sema.init(allocator, &diagnostics);
+    defer sema.deinit();
+
+    try sema.analyze(program);
+    try std.testing.expect(diagnostics.hasErrors());
+}
+
+test "sema floats" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
+
+    // let x = 3.14;
+    const val = try allocator.create(Ast.Expr);
+    val.* = Ast.Expr{ .loc = undefined, .data = .{ .float = 3.14 } };
+    const stmt1 = Ast.Stmt{ .loc = undefined, .data = .{ .let = .{ .name = "x", .type = null, .value = val } } };
+
+    // let y = x + 1.0;
+    const ref_x = try allocator.create(Ast.Expr);
+    ref_x.* = Ast.Expr{ .loc = undefined, .data = .{ .identifier = "x" } };
+    const val_1 = try allocator.create(Ast.Expr);
+    val_1.* = Ast.Expr{ .loc = undefined, .data = .{ .float = 1.0 } };
+    const add = try allocator.create(Ast.Expr);
+    add.* = Ast.Expr{ .loc = undefined, .data = .{ .binary = .{ .left = ref_x, .op = .add, .right = val_1 } } };
+    const stmt2 = Ast.Stmt{ .loc = undefined, .data = .{ .let = .{ .name = "y", .type = null, .value = add } } };
+
+    const program = Ast.Program{ .statements = &[_]Ast.Stmt{ stmt1, stmt2 } };
+
+    var sema = try Sema.init(allocator, &diagnostics);
+    defer sema.deinit();
+
+    try sema.analyze(program);
+    try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "sema float int mismatch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
+
+    // let x = 3.14 + 1;
+    const val_float = try allocator.create(Ast.Expr);
+    val_float.* = Ast.Expr{ .loc = undefined, .data = .{ .float = 3.14 } };
+    const val_int = try allocator.create(Ast.Expr);
+    val_int.* = Ast.Expr{ .loc = undefined, .data = .{ .number = 1 } };
+    const add = try allocator.create(Ast.Expr);
+    add.* = Ast.Expr{ .loc = undefined, .data = .{ .binary = .{ .left = val_float, .op = .add, .right = val_int } } };
+    const stmt = Ast.Stmt{ .loc = undefined, .data = .{ .let = .{ .name = "x", .type = null, .value = add } } };
 
     const program = Ast.Program{ .statements = &[_]Ast.Stmt{stmt} };
 

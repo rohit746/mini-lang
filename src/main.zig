@@ -816,3 +816,89 @@ test "integration structs" {
     // 10, 20, 30, 40
     try std.testing.expectEqualStrings("10\n20\n30\n40\n", run_result.stdout);
 }
+
+test "integration floats" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const source =
+        \\let pi = 3.14159;
+        \\print(pi);
+        \\
+        \\let r = 2.0;
+        \\let area = pi * r * r;
+        \\print(area);
+        \\
+        \\if (area > 10.0) {
+        \\    print(1.0);
+        \\} else {
+        \\    print(0.0);
+        \\}
+    ;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Parse
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+
+    // Diagnostics
+    var diagnostics = Diagnostics.init(allocator);
+
+    // Sema
+    var sema = try Sema.init(allocator, &diagnostics);
+    try sema.analyze(program);
+
+    // Codegen
+    var codegen = try LLVMCodegen.init(allocator);
+    const code = try codegen.generate(program);
+
+    // Prepare output directory
+    const out_dir_name = "zig-out/test_tmp_floats";
+    try std.fs.cwd().makePath(out_dir_name);
+    const out_dir = try std.fs.cwd().openDir(out_dir_name, .{});
+
+    // Write LLVM IR
+    try out_dir.writeFile(.{ .sub_path = "out.ll", .data = code });
+
+    // Write runtime
+    try out_dir.writeFile(.{ .sub_path = "runtime.c", .data = runtime_c });
+
+    // Compile
+    const out_exe = "test_program_floats";
+    var cc_args = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer cc_args.deinit(allocator);
+    try cc_args.append(allocator, "cc");
+
+    if (builtin.os.tag == .macos and builtin.cpu.arch == .aarch64) {
+        try cc_args.append(allocator, "-arch");
+        try cc_args.append(allocator, "x86_64");
+    }
+
+    try cc_args.append(allocator, "-o");
+    try cc_args.append(allocator, out_exe);
+    try cc_args.append(allocator, "out.ll");
+    try cc_args.append(allocator, "runtime.c");
+
+    const compile_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = cc_args.items,
+        .cwd = out_dir_name,
+    });
+
+    if (compile_result.term.Exited != 0) {
+        std.debug.print("Compilation failed:\n{s}\n{s}\n", .{ compile_result.stdout, compile_result.stderr });
+        return error.CompilationFailed;
+    }
+
+    // Run
+    const run_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{try std.fs.path.join(allocator, &.{ ".", out_exe })},
+        .cwd = out_dir_name,
+    });
+
+    try std.testing.expectEqual(run_result.term.Exited, 0);
+    try std.testing.expectEqualStrings("3.141590\n12.566360\n1.000000\n", run_result.stdout);
+}

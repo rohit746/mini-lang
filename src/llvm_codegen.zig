@@ -115,6 +115,7 @@ pub const LLVMCodegen = struct {
     fn getLLVMType(self: *LLVMCodegen, type_info: Ast.Type) ![]const u8 {
         switch (type_info) {
             .int => return "i64",
+            .float => return "double",
             .bool => return "i1",
             .string => return "i8*",
             .void => return "void",
@@ -133,6 +134,7 @@ pub const LLVMCodegen = struct {
         // External declarations
         try self.emit("declare i32 @printf(i8*, ...)\n\n", .{});
         try self.emit("@.str_int = private unnamed_addr constant [5 x i8] c\"%ld\\0A\\00\", align 1\n", .{});
+        try self.emit("@.str_float = private unnamed_addr constant [4 x i8] c\"%f\\0A\\00\", align 1\n", .{});
         try self.emit("@.str_str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1\n", .{});
 
         // Process struct declarations first to define types
@@ -263,6 +265,9 @@ pub const LLVMCodegen = struct {
                 if (type_info == .int) {
                     const call_reg = try self.newReg();
                     try self.emit("  {s} = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([5 x i8], [5 x i8]* @.str_int, i64 0, i64 0), i64 {s})\n", .{ call_reg, val_reg });
+                } else if (type_info == .float) {
+                    const call_reg = try self.newReg();
+                    try self.emit("  {s} = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str_float, i64 0, i64 0), double {s})\n", .{ call_reg, val_reg });
                 } else if (type_info == .string) {
                     const call_reg = try self.newReg();
                     try self.emit("  {s} = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str_str, i64 0, i64 0), i8* {s})\n", .{ call_reg, val_reg });
@@ -428,6 +433,9 @@ pub const LLVMCodegen = struct {
             .number => |val| {
                 return try std.fmt.allocPrint(self.allocator, "{d}", .{val});
             },
+            .float => |val| {
+                return try std.fmt.allocPrint(self.allocator, "{d:.6}", .{val});
+            },
             .boolean => |val| {
                 return if (val) "1" else "0";
             },
@@ -452,20 +460,37 @@ pub const LLVMCodegen = struct {
                 const left_reg = try self.genExpr(bin.left);
                 const right_reg = try self.genExpr(bin.right);
                 const res_reg = try self.newReg();
+                const left_type = try self.getExprType(bin.left);
 
-                switch (bin.op) {
-                    .add => try self.emit("  {s} = add i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .sub => try self.emit("  {s} = sub i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .mul => try self.emit("  {s} = mul i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .div => try self.emit("  {s} = sdiv i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .equal_equal => try self.emit("  {s} = icmp eq i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }), // Assuming int for now
-                    .bang_equal => try self.emit("  {s} = icmp ne i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .less => try self.emit("  {s} = icmp slt i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .less_equal => try self.emit("  {s} = icmp sle i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .greater => try self.emit("  {s} = icmp sgt i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .greater_equal => try self.emit("  {s} = icmp sge i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .logic_and => try self.emit("  {s} = and i1 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
-                    .logic_or => try self.emit("  {s} = or i1 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                if (left_type == .float) {
+                    switch (bin.op) {
+                        .add => try self.emit("  {s} = fadd double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .sub => try self.emit("  {s} = fsub double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .mul => try self.emit("  {s} = fmul double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .div => try self.emit("  {s} = fdiv double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .equal_equal => try self.emit("  {s} = fcmp oeq double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .bang_equal => try self.emit("  {s} = fcmp one double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .less => try self.emit("  {s} = fcmp olt double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .less_equal => try self.emit("  {s} = fcmp ole double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .greater => try self.emit("  {s} = fcmp ogt double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .greater_equal => try self.emit("  {s} = fcmp oge double {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        else => return error.InvalidFloatOp,
+                    }
+                } else {
+                    switch (bin.op) {
+                        .add => try self.emit("  {s} = add i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .sub => try self.emit("  {s} = sub i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .mul => try self.emit("  {s} = mul i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .div => try self.emit("  {s} = sdiv i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .equal_equal => try self.emit("  {s} = icmp eq i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .bang_equal => try self.emit("  {s} = icmp ne i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .less => try self.emit("  {s} = icmp slt i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .less_equal => try self.emit("  {s} = icmp sle i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .greater => try self.emit("  {s} = icmp sgt i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .greater_equal => try self.emit("  {s} = icmp sge i64 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .logic_and => try self.emit("  {s} = and i1 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                        .logic_or => try self.emit("  {s} = or i1 {s}, {s}\n", .{ res_reg, left_reg, right_reg }),
+                    }
                 }
                 return res_reg;
             },
@@ -473,7 +498,14 @@ pub const LLVMCodegen = struct {
                 const right_reg = try self.genExpr(un.right);
                 const res_reg = try self.newReg();
                 switch (un.op) {
-                    .minus => try self.emit("  {s} = sub i64 0, {s}\n", .{ res_reg, right_reg }),
+                    .minus => {
+                        const right_type = try self.getExprType(un.right);
+                        if (right_type == .float) {
+                            try self.emit("  {s} = fsub double 0.0, {s}\n", .{ res_reg, right_reg });
+                        } else {
+                            try self.emit("  {s} = sub i64 0, {s}\n", .{ res_reg, right_reg });
+                        }
+                    },
                     .bang => try self.emit("  {s} = xor i1 {s}, 1\n", .{ res_reg, right_reg }),
                 }
                 return res_reg;
@@ -597,6 +629,7 @@ pub const LLVMCodegen = struct {
     fn getExprType(self: *LLVMCodegen, expr: *Ast.Expr) !Ast.Type {
         switch (expr.data) {
             .number => return .int,
+            .float => return .float,
             .boolean => return .bool,
             .string => return .string,
             .identifier => |name| {
@@ -606,13 +639,13 @@ pub const LLVMCodegen = struct {
             .unary => |un| {
                 switch (un.op) {
                     .bang => return .bool,
-                    .minus => return .int,
+                    .minus => return try self.getExprType(un.right),
                 }
             },
             .binary => |bin| {
                 switch (bin.op) {
                     .equal_equal, .bang_equal, .less, .less_equal, .greater, .greater_equal, .logic_and, .logic_or => return .bool,
-                    else => return .int,
+                    .add, .sub, .mul, .div => return try self.getExprType(bin.left),
                 }
             },
             .call => return .int, // Assume int return

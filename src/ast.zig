@@ -28,6 +28,7 @@ pub const Expr = struct {
 
 pub const ExprData = union(enum) {
     number: i64,
+    float: f64,
     boolean: bool,
     string: []const u8,
     identifier: []const u8,
@@ -66,6 +67,7 @@ pub const StructFieldInit = struct {
 
 pub const Type = union(enum) {
     int,
+    float,
     string,
     bool,
     void,
